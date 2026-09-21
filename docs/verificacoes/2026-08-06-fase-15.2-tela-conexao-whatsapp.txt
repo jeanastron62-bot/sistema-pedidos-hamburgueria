@@ -1,0 +1,51 @@
+=== Fase 15.2 -- aba de conexao WhatsApp no frontend (ADM/TI) ===
+Testado no navegador via preview do Vite dev server (localhost:5173, proxy
+/api -> backend real na porta 3000), login real com usuario TI de teste
+(ti_browser_teste_fase15, removido ao final).
+
+=== a) build de producao (tsc -b && vite build) sem erro ===
+(rodado antes deste teste -- BUILD_EXIT=0, ver build acima nesta sessao)
+
+=== b) login como TI real -> painel TI, aba WhatsApp presente na lista ===
+texto da pagina apos login:
+Dashboard
+Cardapio
+Usuarios
+Bairros
+Configuracoes
+WhatsApp   <- nova, entre Configuracoes e Logs, exatamente onde foi adicionada
+Logs
+
+=== c) clique na aba WhatsApp -- estado desconectado ===
+WhatsApp
+Conexao da conta do WhatsApp Business (Embedded Signup)
+Nenhum WhatsApp conectado. O dono do numero precisa estar logado no
+Facebook dele pra concluir a conexao.
+[botao] Conectar WhatsApp
+
+=== d) clique em "Conectar WhatsApp" SEM VITE_META_APP_ID/VITE_META_ES_CONFIG_ID
+configurados (nao ha frontend/.env ainda -- so .env.example) ===
+Esperado: mensagem de erro clara, SEM tentar chamar FB.login com config_id
+undefined (o que daria um erro confuso vindo do SDK do Facebook em vez de
+uma mensagem legivel).
+
+Resultado real:
+"VITE_META_APP_ID / VITE_META_ES_CONFIG_ID nao configurados neste ambiente.
+Crie a Configuration do Embedded Signup no painel do Meta for Developers e
+preencha o .env do frontend antes de conectar."
+
+=== e) console do navegador ===
+Nenhum erro (read_console_messages onlyErrors=true -> "No console logs").
+
+=== NAO TESTADO NESTA SESSAO (motivo: falta VITE_META_APP_ID e
+VITE_META_ES_CONFIG_ID reais, que so existem depois que o usuario criar a
+Configuration no App Dashboard da Meta) ===
+- Carregamento real do SDK do Facebook (connect.facebook.net/pt_BR/sdk.js).
+- Popup real de FB.login e captura do "code".
+- Captura real do evento de sessao (postMessage de facebook.com).
+- POST /connect com um "code" de verdade.
+- Estado "conectado" da tela (card com displayPhoneNumber/verifiedName/selo
+  Coexistence) e o botao "Desconectar".
+
+Isso fica registrado como pendencia de teste, nao como "assumido
+funcionando" -- ver docs/relatorios/FASE-15_embedded-signup-coexistence_EM-ANDAMENTO.txt.

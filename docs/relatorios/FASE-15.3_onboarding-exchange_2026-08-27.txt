@@ -1,0 +1,129 @@
+SISTEMA DE PEDIDOS TRAILER — RELATÓRIO DE FASE
+==================================================
+
+FASE: 15.3 — Backend do Embedded Signup (conexão do número real)
+DOC DE FASE: docs/FASE-15-coexistencia-numero-real-CLAUDE-CODE.md (seção 7)
+STATUS: implementada. Provado por execução o que não depende da Meta; o caminho
+        feliz só será exercido na operação real (seção 9).
+Data: 2026-08-27.
+
+--------------------------------------------------------------------------------
+CORREÇÃO DE PREMISSA DO ENUNCIADO
+--------------------------------------------------------------------------------
+O enunciado desta tarefa dizia "a metade do backend não existe: sem endpoint de
+troca do code, sem persistência do waba_id/phone_number_id, sem migration". Os
+três existiam desde 06/08/2026:
+
+  - endpoint:    POST /api/webhook/whatsapp/connect -> connectBusinessAccount()
+  - persistência: prisma.whatsappBusinessAccount.upsert
+  - migration:   20260806180036_fase15_embedded_signup (aplicada)
+
+O reconhecimento (15.3a) apontou isso antes de qualquer alteração, e as três
+decisões do Rosario nesta sessão foram:
+
+  1. Token CONTINUA no banco (cifrado). Schema mantido, migration ADITIVA.
+     A spec pedia linha única id=1 sem token, o que exigiria DROP sobre tabela
+     existente e quebraria resolveSendCredentials em sendMessage.ts.
+  2. EVOLUIR o endpoint existente em vez de criar /api/whatsapp/onboarding/
+     exchange em paralelo — dois caminhos pro mesmo fluxo, com o frontend
+     chamando só um, é dívida no dia seguinte.
+  3. O GET de is_on_biz_app/platform_type foi confirmado pelo Rosario na doc
+     oficial (este ambiente não alcança developers.facebook.com).
+
+--------------------------------------------------------------------------------
+O QUE FOI FEITO
+--------------------------------------------------------------------------------
+SCHEMA (migration 20260827012506_fase15_onboarding_confirmacao_coexistencia)
+  Duas colunas nullable em whatsapp_business_accounts: is_on_biz_app (BOOLEAN)
+  e platform_type (TEXT). isCoexistence continua e NÃO foi substituído: ele é o
+  que o FLUXO alegou (nome do evento de sessão), as duas novas são o que a API
+  CONFIRMOU. Divergência entre eles é o sinal de que a conexão não ficou de pé;
+  guardar só um dos lados apagaria esse sinal.
+  null != false de propósito: null = a Meta não devolveu o campo; false = a Meta
+  disse que não.
+
+VALIDAÇÃO
+  backend/src/modules/whatsapp/whatsapp.schema.ts (novo), no padrão do projeto
+  (<modulo>.schema.ts + .parse no controller). Body: { code, wabaId,
+  sessionInfo? }. ZodError já virava 400 no errorHandler — nada novo ali.
+
+SERVICE (embeddedSignup.service.ts, reescrito)
+  1. Troca o code por token de negócio.
+  2. Busca os números da WABA e escolhe o certo (nunca data[0] — ver abaixo).
+  3. NOVO: GET /<PHONE_NUMBER_ID>?fields=is_on_biz_app,platform_type.
+  4. upsert com os campos novos.
+  5. subscribe nos webhooks.
+  6. createLog WHATSAPP_ONBOARDED com wabaId, phoneNumberId, isOnBizApp,
+     platformType, isCoexistence e a role de quem executou.
+
+  TOKEN: nasce e morre dentro da função na forma legível. Cifrado antes de
+  encostar no banco, nunca devolvido ao painel, nunca logado, nem dentro de
+  objeto de erro. describeGraphError() extrai só status/type/code/message da
+  resposta da Meta — o corpo inteiro nunca é serializado, porque pode ecoar o
+  que foi enviado, e o que é enviado na troca inclui client_secret e code.
+  Retorno ao frontend é allowlist explícita, não "tudo menos o token": campo
+  novo no model não vaza por esquecimento.
+
+  DESVIO CONSCIENTE DA ORDEM DA SPEC: o subscribe roda DEPOIS do upsert, não
+  antes. Motivo: a esta altura o code já foi consumido e não volta. Se a
+  assinatura falhasse antes da gravação, o token válido iria junto pro lixo e o
+  Embedded Signup teria que ser refeito do zero — com a dona e o celular do
+  trailer de novo, que é exatamente o custo que esta fase existe pra evitar.
+  Gravado, a assinatura é idempotente e pode ser repetida com o token salvo.
+  A regra "não grave a linha pela metade" continua valendo para os passos 1-3:
+  qualquer falha neles impede a gravação (provado, caso 4).
+
+FRONTEND (WhatsappConnection.tsx)
+  - Manda wabaId explícito, vindo do evento de sessão. Se ele não vier, recusa
+    ANTES de gastar o code, com mensagem clara — melhor recusar que queimar a
+    única tentativa numa requisição que já nasce incompleta.
+  - phone_number_id visível, selecionável (select-all) e com botão Copiar. É o
+    valor colado no Railway logo em seguida; se só existisse no banco, alguém
+    teria que abrir o Postgres no meio da operação, com a dona esperando.
+  - Etiqueta passou a refletir a API, não o popup: "Coexistência ativa" só com
+    is_on_biz_app=true; se o fluxo alegou coexistência e a Meta não confirmou,
+    aparece "Não confirmada" em âmbar. is_on_biz_app e platform_type ficam
+    visíveis em texto.
+
+--------------------------------------------------------------------------------
+PROVA — SEPARADO POR TIPO, COMO PEDIDO
+--------------------------------------------------------------------------------
+docs/verificacoes/2026-08-27-fase-15.3-onboarding-exchange.txt
+
+PROVADO POR EXECUÇÃO REAL (servidor rodando, Postgres real, JWT real):
+  - Sem token -> 401.
+  - Token de GARCOM -> 403.
+  - ADM sem code -> 400 do Zod apontando o campo. Idem sem wabaId.
+  - ADM com code falso -> 502 com mensagem descritiva, ZERO linhas em
+    whatsapp_business_accounts e ZERO logs WHATSAPP_ONBOARDED (conferido por
+    query, saída colada).
+  - Log do servidor sem nenhum segredo: busca por META_APP_SECRET, pelo code
+    enviado, por client_secret e por access_token no log inteiro = 0
+    ocorrências.
+  - Migration: só ADD COLUMN nullable.
+
+SÓ COMPILA (não exercido em runtime):
+  - O caminho feliz inteiro: troca bem-sucedida, leitura dos números,
+    is_on_biz_app/platform_type, upsert, subscribe, log.
+  - A tela renderizando uma conta conectada (nunca houve uma).
+  - backend: npm run build -> exit 0. frontend: npm run build -> exit 0.
+
+DEPENDE DO FLUXO REAL COM A META:
+  - Que o endpoint de troca responde como esperado.
+  - Os nomes de campo da resposta de /phone_numbers e de is_on_biz_app/
+    platform_type.
+  - Que o evento FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING chega com waba_id.
+
+RESSALVA sobre o caso 4: o HTTP 403 da mensagem NÃO veio da Meta.
+graph.facebook.com está bloqueado pelo proxy de egresso deste ambiente (curl ao
+mesmo host devolve 000). O que está provado é o TRATAMENTO da falha. Que a Meta
+rejeita um code falso com mensagem específica não foi provado.
+
+--------------------------------------------------------------------------------
+NÃO CONFIRMADO EM FONTE PRIMÁRIA
+--------------------------------------------------------------------------------
+developers.facebook.com está bloqueado neste ambiente. Não pude verificar por
+conta própria: o caminho GET /<PHONE_NUMBER_ID>?fields=is_on_biz_app,
+platform_type (confirmado pelo Rosario em 27/08), os nomes exatos dos campos de
+resposta, e a versão de Graph adequada a eles. Usei v21.0, a mesma já em uso em
+sendMessage.ts e no resto do service.

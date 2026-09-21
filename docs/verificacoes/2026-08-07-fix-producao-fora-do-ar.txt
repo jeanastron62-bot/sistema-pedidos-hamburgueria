@@ -1,0 +1,111 @@
+=== INCIDENTE: producao fora do ar no Railway ("Application failed to respond") ===
+Data da investigacao: 2026-08-07
+Relato do usuario: site hospedado mostrando "Application failed to respond",
+container "nem chegou a subir".
+
+--------------------------------------------------------------------------------
+CAUSA RAIZ
+--------------------------------------------------------------------------------
+
+backend/src/config/env.ts valida o ambiente com zod e faz process.exit(1) se
+faltar qualquer variavel obrigatoria -- comportamento correto e intencional do
+projeto (o servidor nunca sobe quebrado). O problema nao era esse mecanismo, e
+sim QUAIS variaveis foram marcadas como obrigatorias.
+
+Sete variaveis de uma funcionalidade AINDA NAO LANCADA (o bot de WhatsApp)
+eram obrigatorias pro processo inteiro subir:
+
+  META_APP_SECRET, META_VERIFY_TOKEN, OPENAI_API_KEY, META_ACCESS_TOKEN,
+  META_PHONE_NUMBER_ID   <- entraram no commit 2beb757 (Fases 13/14, 2026-07-28)
+  META_APP_ID, WHATSAPP_TOKEN_ENCRYPTION_KEY  <- entraram no commit 16f2121 (Fase 15, 2026-08-06)
+
+Se qualquer uma delas nao estiver configurada no Railway, o container morre no
+boot e o site INTEIRO cai -- cardapio publico, pedidos, paineis -- por falta de
+credencial de uma parte que ninguem tinha ligado ainda.
+
+Observacao importante: como as 5 primeiras entraram em 28/07, e possivel que a
+producao esteja fora do ar desde entao, e nao apenas desde o deploy de ontem.
+
+--------------------------------------------------------------------------------
+REPRODUCAO (antes de qualquer correcao)
+--------------------------------------------------------------------------------
+
+Removidas META_APP_ID e WHATSAPP_TOKEN_ENCRYPTION_KEY do .env local e tentado
+subir o servidor:
+
+  Configuracao de ambiente invalida: {
+    _errors: [],
+    META_APP_ID: { _errors: [ 'Required' ] },
+    WHATSAPP_TOKEN_ENCRYPTION_KEY: { _errors: [ 'Required' ] }
+  }
+
+Servidor recusou subir -- exatamente o que o Railway reporta como
+"Application failed to respond".
+
+--------------------------------------------------------------------------------
+CORRECAO
+--------------------------------------------------------------------------------
+
+Todas as 7 variaveis do bloco WhatsApp/OpenAI viraram .optional() no envSchema.
+Cada uma passou a ser checada no seu ponto de uso real:
+
+  META_APP_SECRET      -> whatsapp.service.ts (isValidSignature): sem segredo,
+                          REJEITA o webhook (nunca aceita -- aceitar deixaria
+                          qualquer um injetar mensagem no sistema).
+  META_VERIFY_TOKEN    -> whatsapp.controller.ts (verify): sem token, responde
+                          403 (evita um `undefined === undefined` acidental
+                          validar qualquer requisicao).
+  OPENAI_API_KEY       -> openaiClient.ts (callOpenAI): erro claro.
+  META_ACCESS_TOKEN /
+  META_PHONE_NUMBER_ID -> sendMessage.ts (resolveSendCredentials): erro claro.
+  META_APP_ID /
+  META_APP_SECRET /
+  WHATSAPP_TOKEN_ENCRYPTION_KEY -> embeddedSignup.service.ts: 501 com mensagem
+                          explicando o que falta; tokenCrypto.ts: erro claro.
+
+Principio aplicado: funcionalidade nao-lancada nunca pode derrubar o cardapio
+publico e os pedidos, que e o que paga a conta.
+
+--------------------------------------------------------------------------------
+PROVA DEPOIS DA CORRECAO
+--------------------------------------------------------------------------------
+
+npm run build (tsc): BUILD_EXIT=0.
+
+.env reduzido ao minimo -- so DATABASE_URL, JWT_SECRET, NODE_ENV, PORT, TZ
+(exatamente o cenario de um Railway que nunca recebeu as variaveis do bot):
+
+  Servidor rodando na porta 3000 em ambiente development
+
+Rotas do site nesse estado minimo:
+  GET /                          -> 200
+  GET /api/public/menu           -> 200
+  GET /api/public/config         -> 200
+  GET /api/public/neighborhoods  -> 200
+
+Webhook do WhatsApp sem credencial (deve recusar com seguranca, nao derrubar):
+  GET  /api/webhook/whatsapp (verify) -> 403  (esperado)
+  POST /api/webhook/whatsapp          -> 401  (esperado)
+
+Servidor continua vivo depois de tudo:
+  GET / -> 200
+
+.env local restaurado integralmente ao final.
+
+--------------------------------------------------------------------------------
+PENDENTE (acao do usuario, no dashboard do Railway)
+--------------------------------------------------------------------------------
+
+Esta correcao garante que o SITE sobe mesmo sem as variaveis do bot. Mas o bot
+de WhatsApp so volta a funcionar em producao quando estas forem cadastradas no
+servico do Railway:
+
+  META_APP_SECRET, META_VERIFY_TOKEN, OPENAI_API_KEY,
+  META_ACCESS_TOKEN, META_PHONE_NUMBER_ID
+
+E, para a Fase 15 (conectar WhatsApp pela tela):
+  META_APP_ID, WHATSAPP_TOKEN_ENCRYPTION_KEY
+
+Confirmar tambem que DATABASE_URL, JWT_SECRET e TZ=America/Sao_Paulo estao
+setados la -- sem os dois primeiros o servidor continua (corretamente)
+recusando subir.

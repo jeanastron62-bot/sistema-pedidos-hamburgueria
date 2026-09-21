@@ -1,0 +1,175 @@
+=== migrations aplicadas ===
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "railway", schema "public" at "hayabusa.proxy.rlwy.net:22873"
+
+5 migrations found in prisma/migrations
+
+Database schema is up to date!
+
+=== rotas do módulo config ===
+import { Router } from 'express';
+import * as configController from './config.controller';
+import { requireAuth } from '../../middleware/auth';
+import { requireRole } from '../../middleware/roles';
+import { Role } from '@prisma/client';
+
+const router = Router();
+
+router.use(requireAuth);
+
+router.get('/', configController.get);
+router.get('/shift-range', configController.shiftRange);
+router.patch('/', requireRole(Role.ADM, Role.TI), configController.update);
+router.patch('/extend-delivery', requireRole(Role.ADM, Role.TI), configController.extendDelivery);
+
+// Fase 11 -- abrir/fechar/adiar são acessíveis também a GARCOM/CHAPISTA, não só
+// ADM/TI (ver tabela de permissões da fase). Editar o aviso do dia é
+// CHAPISTA/ADM/TI. Editar defaultCloseHour/closeCeilingHour/closedWeekday
+// continua só ADM/TI, por passar pela rota genérica PATCH / acima.
+router.patch('/trailer/open', requireRole(Role.GARCOM, Role.CHAPISTA, Role.ADM, Role.TI), configController.openTrailer);
+router.patch('/trailer/close', requireRole(Role.GARCOM, Role.CHAPISTA, Role.ADM, Role.TI), configController.closeTrailer);
+router.patch('/trailer/reschedule-close', requireRole(Role.GARCOM, Role.CHAPISTA, Role.ADM, Role.TI), configController.rescheduleClose);
+router.patch('/daily-notice', requireRole(Role.CHAPISTA, Role.ADM, Role.TI), configController.updateDailyNotice);
+
+export default router;
+
+=== arquivo com a lógica de fechamento (nome real, qualquer que seja) ===
+src/modules/config/config.controller.ts
+src/modules/config/config.service.ts
+src/modules/orders/orders.service.ts
+src/modules/public/public.controller.ts
+src/utils/trailerSchedule.ts
+
+=== neighborhoodId no schema (confirmar que continua opcional, sem migration nova) ===
+112:  neighborhoodId           Int?     @map("neighborhood_id")
+130:  neighborhood  Neighborhood?        @relation(fields: [neighborhoodId], references: [id], onDelete: SetNull)
+140:  @@index([neighborhoodId])
+
+=== conteúdo de src/utils/trailerSchedule.ts (função pura, sem cron/setInterval) ===
+// Mesmo espírito de deliveryWindow.ts: função pura, sem I/O, sem estado. Sem
+// scheduler -- o "fechamento" é só a consequência de isEffectivelyOpen passar
+// a responder false na próxima requisição que checar.
+export function isEffectivelyOpen(
+  config: { trailerOpen: boolean; scheduledCloseAt: Date | null },
+  now: Date = new Date()
+): boolean {
+  if (!config.trailerOpen) return false;
+  if (config.scheduledCloseAt === null) return false; // nunca "aberto sem fim"
+  return now < config.scheduledCloseAt;
+}
+
+export function minutesUntilClose(
+  scheduledCloseAt: Date | null,
+  now: Date = new Date()
+): number | null {
+  if (scheduledCloseAt === null) return null;
+  return Math.round((scheduledCloseAt.getTime() - now.getTime()) / 60000);
+}
+
+// Próxima ocorrência de defaultCloseHour a partir de `now`, em horário local
+// (TZ=America/Sao_Paulo já é variável de ambiente do processo -- setHours()
+// já opera no fuso certo, sem conversão manual). Se a hora de hoje já passou,
+// cai pro dia seguinte.
+export function computeNextScheduledClose(defaultCloseHour: number, now: Date = new Date()): Date {
+  const candidate = new Date(now);
+  candidate.setHours(defaultCloseHour, 0, 0, 0);
+  if (candidate <= now) candidate.setDate(candidate.getDate() + 1);
+  return candidate;
+}
+
+=== reagendar para horário FORA do teto (07:00) -- TEM QUE DAR 400 ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100     19   0      0 100     19      0     15   00:01   00:01             15100     19   0      0 100     19      0      8   00:02   00:02              8100     19   0      0 100     19      0      5   00:03   00:03              5100     19   0      0 100     19      0      4   00:04   00:04              4100     55 100     36 100     19      7      3   00:06   00:05   00:01      4100     55 100     36 100     19      7      3   00:06   00:05   00:01      4100     55 100     36 100     19      7      3   00:06   00:05   00:01      4
+HTTP/1.1 500 Internal Server Error
+X-Powered-By: Express
+Content-Type: application/json; charset=utf-8
+Content-Length: 36
+ETag: W/"24-c0nVOIq4WcZOoNbg2C2VT9vw7Io"
+Date: Wed, 22 Jul 2026 00:38:55 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"Erro interno do servidor"}
+=== reagendar para horário válido (03:30) -- 200 ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100     19   0      0 100     19      0     15   00:01   00:01             15100     19   0      0 100     19      0      8   00:02   00:02              8100     19   0      0 100     19      0      5   00:03   00:03              5100     19   0      0 100     19      0      4   00:04   00:04              4100     19   0      0 100     19      0      3   00:06   00:05   00:01      3100    443 100    424 100     19     77      3   00:06   00:05   00:01      3100    443 100    424 100     19     77      3   00:06   00:05   00:01      3100    443 100    424 100     19     77      3   00:06   00:05   00:01      3
+HTTP/1.1 200 OK
+X-Powered-By: Express
+Content-Type: application/json; charset=utf-8
+Content-Length: 424
+ETag: W/"1a8-qdS6Thnnw8YOsn2ia1xhrQeYpP0"
+Date: Wed, 22 Jul 2026 00:39:01 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":1,"trailerOpen":true,"deliveryActive":true,"deliveryExtendedUntil":"2026-07-21T20:41:36.484Z","maxTables":8,"contactPhone":"31999990000","contactInstagram":"trailer.pedidos.demo","scheduledCloseAt":"2026-07-22T06:30:00.000Z","dailyNotice":null,"dailyNoticeUpdatedAt":"2026-07-21T19:18:13.647Z","defaultCloseHour":2,"closeCeilingHour":6,"closedWeekday":1,"updatedBy":"garcom_prova_11_12","updatedAt":"2026-07-22T00:38:59.751Z"}
+=== ENTREGADOR tentando adiar -- TEM QUE DAR 403 ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100     44 100     25 100     19   5153   3916                              0100     44 100     25 100     19   4672   3551                              0100     44 100     25 100     19   4304   3271                              0
+HTTP/1.1 403 Forbidden
+X-Powered-By: Express
+Content-Type: application/json; charset=utf-8
+Content-Length: 25
+ETag: W/"19-5ZQ5vcCVRLK7gE/2/YephTvNkEk"
+Date: Wed, 22 Jul 2026 00:39:01 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"Acesso negado"}
+=== NOTA: a tentativa anterior deu 500 por uma instabilidade transitoria de
+conexao com o Postgres do Railway (P1001, mesmo erro que ja apareceu 2x nesta
+sessao em comandos sem relacao nenhuma com este codigo -- ver stack trace real
+abaixo). Nao e bug de validacao. Repetindo o mesmo teste (07:00, fora do teto):
+
+=== stack trace real da tentativa anterior (log do servidor) ===
+PrismaClientInitializationError: Can't reach database server at hayabusa.proxy.rlwy.net:22873
+    at .../config.service.ts:143:10 (rescheduleClose) -- erro de rede, nao de logica
+
+=== reagendar para horário FORA do teto (07:00) -- repetido, TEM QUE DAR 400 ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100     19   0      0 100     19      0     15   00:01   00:01             15100     19   0      0 100     19      0      8   00:02   00:02              8100     79 100     60 100     19     21      6   00:03   00:02   00:01      8100     79 100     60 100     19     21      6   00:03   00:02   00:01      8100     79 100     60 100     19     21      6   00:03   00:02   00:01      8
+HTTP/1.1 400 Bad Request
+X-Powered-By: Express
+Content-Type: application/json; charset=utf-8
+Content-Length: 60
+ETag: W/"3c-yEkshLcinmx11RVWdFtg+JLIiWM"
+Date: Wed, 22 Jul 2026 00:39:33 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"Horário fora do teto permitido (00:00–06:00)."}
+=== Fase 12: criar pedido com bairro personalizado, taxa R$ 12,50 ===
+(item usado: id=19 'Hambúrguer', preço 14.00 -- confirmado no banco antes deste teste)
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    313   0      0 100    313      0    258   00:01   00:01            258100    313   0      0 100    313      0    140   00:02   00:02            140100    313   0      0 100    313      0     96   00:03   00:03             96100    313   0      0 100    313      0     73   00:04   00:04             73100    313   0      0 100    313      0     59   00:05   00:05             59100    313   0      0 100    313      0     49   00:06   00:06              0100    313   0      0 100    313      0     42   00:07   00:07              0100   1155 100    842 100    313    108     40   00:07   00:07            151100   1155 100    842 100    313    108     40   00:07   00:07            151100   1155 100    842 100    313    108     40   00:07   00:07            151
+HTTP/1.1 201 Created
+X-Powered-By: Express
+Content-Type: application/json; charset=utf-8
+Content-Length: 842
+ETag: W/"34a-Z9li1MyXsbyqOoOUfPK1p4eXQys"
+Date: Wed, 22 Jul 2026 00:40:30 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":62,"type":"DELIVERY","status":"AGUARDANDO","tableNumber":null,"subtotal":"14","total":"26.5","paymentMethod":"PIX","cashPaidAmount":null,"customerName":"Teste Prova Fase12","customerPhone":"31999999999","customerAddress":"Rua Teste, 456","neighborhoodId":null,"neighborhoodNameSnapshot":"Bairro Fora Da Lista","deliveryFeeSnapshot":"12.5","createdById":25,"createdByName":"garcom_prova_11_12","assignedToId":null,"assignedToName":null,"clientOnline":false,"requiresStaffConfirmation":false,"problems":null,"createdAt":"2026-07-22T00:40:25.090Z","updatedAt":"2026-07-22T00:40:25.090Z","items":[{"id":68,"orderId":62,"menuItemId":19,"menuItemName":"Hambúrguer","unitPrice":"14","quantity":1,"observations":null,"selectedChoice":null,"extras":[]}],"neighborhood":null,"createdBy":{"id":25,"username":"garcom_prova_11_12","role":"GARCOM"}}
+=== conferindo o total gravado no banco pro pedido acima (query direta, id=62) ===
+{
+  id: 62,
+  neighborhood_id: null,
+  neighborhood_name_snapshot: 'Bairro Fora Da Lista',
+  delivery_fee_snapshot: 12.5,
+  subtotal: 14,
+  total: 26.5
+}
+total esperado (item R$14,00 + taxa R$12,50): 2650 centavos
+total gravado no banco: 2650 centavos
+bate exatamente? true

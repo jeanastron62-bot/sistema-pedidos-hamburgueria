@@ -1,0 +1,99 @@
+=== a) GET verify, token correto ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100      8 100      8   0      0    598      0                              0100      8 100      8   0      0    593      0                              0100      8 100      8   0      0    589      0                              0
+HTTP/1.1 200 OK
+X-Powered-By: Express
+Content-Type: text/html; charset=utf-8
+Content-Length: 8
+ETag: W/"8-4PaBNNKdwybRFd5Mj6uHAKPEsAI"
+Date: Tue, 21 Jul 2026 22:23:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+teste123
+=== a) GET verify, token errado ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100      9 100      9   0      0   3259      0                              0100      9 100      9   0      0   3072      0                              0100      9 100      9   0      0   2923      0                              0
+HTTP/1.1 403 Forbidden
+X-Powered-By: Express
+Content-Type: text/plain; charset=utf-8
+Content-Length: 9
+ETag: W/"9-PatfYBLj4Um1qTm5zrukoLhNyPU"
+Date: Tue, 21 Jul 2026 22:23:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+Forbidden=== b) POST com assinatura válida ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    430 100      2 100    428     49  10667                              0100    430 100      2 100    428     49  10642                              0100    430 100      2 100    428     49  10620                              0
+HTTP/1.1 200 OK
+X-Powered-By: Express
+Content-Type: text/plain; charset=utf-8
+Content-Length: 2
+ETag: W/"2-nOO9QiTIwXgNtWtBJezz8kv3SLc"
+Date: Tue, 21 Jul 2026 22:23:52 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+OK=== b) confirmação no banco ===
+{
+  "id": 1,
+  "phone": "5531988887777",
+  "botPaused": false,
+  "lastInboundAt": "2026-07-21T22:23:52.264Z",
+  "createdAt": "2026-07-21T22:23:53.951Z",
+  "updatedAt": "2026-07-21T22:23:53.951Z",
+  "messages": [
+    {
+      "id": 1,
+      "conversationId": 1,
+      "waMessageId": "wamid.TESTE_1784672623877",
+      "direction": "IN",
+      "rawPayload": {
+        "id": "wamid.TESTE_1784672623877",
+        "from": "5531988887777",
+        "text": {
+          "body": "oi"
+        },
+        "type": "text",
+        "timestamp": "1784672623"
+      },
+      "createdAt": "2026-07-21T22:23:54.370Z"
+    }
+  ]
+}
+=== c) POST com assinatura inválida (deve dar 401) ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    440 100     12 100    428   4252 148.1k                              0100    440 100     12 100    428   4076 141.9k                              0100    440 100     12 100    428   3960 137.9k                              0
+HTTP/1.1 401 Unauthorized
+X-Powered-By: Express
+Content-Type: text/plain; charset=utf-8
+Content-Length: 12
+ETag: W/"c-dAuDFQrdjS3hezqxDTNgW7AOlYk"
+Date: Tue, 21 Jul 2026 22:24:18 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+Unauthorized=== d) contagem ANTES do reenvio ===
+contagem de mensagens: 1
+
+=== d) reenvio do mesmo waMessageId (mesma assinatura, mesmo payload) ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    430 100      2 100    428    524 109.6k                              0100    430 100      2 100    428    509 106.4k                              0100    430 100      2 100    428    496 103.7k                              0
+HTTP/1.1 200 OK
+X-Powered-By: Express
+Content-Type: text/plain; charset=utf-8
+Content-Length: 2
+ETag: W/"2-nOO9QiTIwXgNtWtBJezz8kv3SLc"
+Date: Tue, 21 Jul 2026 22:24:36 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+OK
+=== d) contagem DEPOIS do reenvio ===
+contagem de mensagens: 1

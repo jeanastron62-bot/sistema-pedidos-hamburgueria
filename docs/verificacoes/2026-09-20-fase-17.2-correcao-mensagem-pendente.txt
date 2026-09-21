@@ -1,0 +1,145 @@
+Saida bruta, sem edicao. Os dois erros que aparecem no meio (fixture da
+prova, nao do codigo: usei um userId de log que nao existia e um telefone
+que colidiu numa reexecucao) ficam registrados porque saida crua nao se
+edita -- so a reexecucao que corrigiu o script vem depois, e passou.
+
+### CASO A ###
+===== CASO A: sucesso lento -- ve PENDENTE antes de ENVIADA =====
+  no meio do envio: {"deliveryStatus":"PENDENTE","waMessageId":null,"failureReason":null}
+  depois do envio:   {"deliveryStatus":"ENVIADA","waMessageId":"wamid.b3fc92ca-5f91-4000-bf9d-9e8b08dcf64f","failureReason":null}
+  >>> ESPERADO: no meio PENDENTE sem waMessageId; depois ENVIADA com waMessageId e sem failureReason.
+
+### CASO B ###
+===== CASO B: Graph responde erro (401) -- FALHOU, sem apagar =====
+  sendWhatsappText lancou? Falha ao enviar mensagem no WhatsApp: {"error":{"message":"Error validating access token","type":"OAuthException","code":190}}
+  linha no banco: {"deliveryStatus":"FALHOU","waMessageId":null,"failureReason":"{\"error\":{\"message\":\"Error validating access token\",\"type\":\"OAuthException\",\"code\":190}}"}
+  >>> ESPERADO: lanca erro, linha continua no banco com FALHOU e failureReason com o corpo do 401.
+
+### CASO C ###
+===== CASO C: erro de rede (porta sem servidor nenhum) -- FALHOU com motivo de rede =====
+  sendWhatsappText lancou? Falha ao enviar mensagem no WhatsApp: fetch failed
+  linha no banco: {"deliveryStatus":"FALHOU","waMessageId":null,"failureReason":"fetch failed"}
+  >>> ESPERADO: lanca erro (ECONNREFUSED ou similar), linha FALHOU com esse motivo.
+
+### CASO D ###
+===== CASO D: sendPanelMessage NAO grava humanRepliedAt quando o envio falha =====
+  antes: {"botPaused":false,"humanRepliedAt":null}
+  sendPanelMessage lancou? Falha ao enviar mensagem no WhatsApp: {"error":{"message":"Error validating access token","type":"OAuthException","code":190}}
+  depois: {"botPaused":false,"humanRepliedAt":null}
+  >>> ESPERADO: lanca, humanRepliedAt continua null, botPaused nao muda para true por esta chamada.
+
+### CASO E ###
+===== CASO E: sendPanelMessage grava humanRepliedAt so quando o envio da certo =====
+ERRO NAO TRATADO NO SCRIPT: PrismaClientKnownRequestError: 
+Invalid `tx.log.create()` invocation in
+/home/user/Rede-Bob-s/backend/src/utils/logger.ts:11:16
+
+   8 };
+   9 
+  10 export async function createLog(tx: Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">, data: LogData) {
+→ 11   await tx.log.create(
+Foreign key constraint violated on the constraint: `logs_user_id_fkey`
+    at ei.handleRequestError (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:228:13)
+    at ei.handleAndLogRequestError (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:174:12)
+    at ei.request (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:143:12)
+    at async a (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/getPrismaClient.ts:833:24)
+    at async createLog (/home/user/Rede-Bob-s/backend/src/utils/logger.ts:11:3)
+    at async sendPanelMessage (/home/user/Rede-Bob-s/backend/src/modules/whatsapp/whatsapp.service.ts:866:3)
+    at async main (/tmp/claude-0/-home-user-Rede-Bob-s/3ddac799-0559-5345-a592-9ca07abf004f/scratchpad/prova-pendente.ts:83:19) {
+  code: 'P2003',
+  meta: { modelName: 'Log', constraint: 'logs_user_id_fkey' },
+  clientVersion: '6.19.3'
+}
+### CASO D (refeito com userId valido) ###
+ERRO NAO TRATADO NO SCRIPT: PrismaClientKnownRequestError: 
+Invalid `prisma.whatsappConversation.create()` invocation in
+/tmp/claude-0/-home-user-Rede-Bob-s/3ddac799-0559-5345-a592-9ca07abf004f/scratchpad/prova-pendente.ts:21:50
+
+  18 const { createServer: createHttpServer } = await import('http');
+  19 initSocket(createHttpServer()); // sendPanelMessage emite no /staff no final
+  20 
+→ 21 const conv = await prisma.whatsappConversation.create(
+Unique constraint failed on the fields: (`phone`)
+    at ei.handleRequestError (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:228:13)
+    at ei.handleAndLogRequestError (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:174:12)
+    at ei.request (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:143:12)
+    at async a (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/getPrismaClient.ts:833:24)
+    at async main (/tmp/claude-0/-home-user-Rede-Bob-s/3ddac799-0559-5345-a592-9ca07abf004f/scratchpad/prova-pendente.ts:21:16) {
+  code: 'P2002',
+  meta: { modelName: 'WhatsappConversation', target: [ 'phone' ] },
+  clientVersion: '6.19.3'
+}
+
+### CASO E ###
+ERRO NAO TRATADO NO SCRIPT: PrismaClientKnownRequestError: 
+Invalid `prisma.whatsappConversation.create()` invocation in
+/tmp/claude-0/-home-user-Rede-Bob-s/3ddac799-0559-5345-a592-9ca07abf004f/scratchpad/prova-pendente.ts:21:50
+
+  18 const { createServer: createHttpServer } = await import('http');
+  19 initSocket(createHttpServer()); // sendPanelMessage emite no /staff no final
+  20 
+→ 21 const conv = await prisma.whatsappConversation.create(
+Unique constraint failed on the fields: (`phone`)
+    at ei.handleRequestError (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:228:13)
+    at ei.handleAndLogRequestError (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:174:12)
+    at ei.request (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:143:12)
+    at async a (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/getPrismaClient.ts:833:24)
+    at async main (/tmp/claude-0/-home-user-Rede-Bob-s/3ddac799-0559-5345-a592-9ca07abf004f/scratchpad/prova-pendente.ts:21:16) {
+  code: 'P2002',
+  meta: { modelName: 'WhatsappConversation', target: [ 'phone' ] },
+  clientVersion: '6.19.3'
+}
+### CASO D ###
+===== CASO D: sendPanelMessage NAO grava humanRepliedAt quando o envio falha =====
+  antes: {"botPaused":false,"humanRepliedAt":null}
+  sendPanelMessage lancou? Falha ao enviar mensagem no WhatsApp: {"error":{"message":"Error validating access token","type":"OAuthException","code":190}}
+  depois: {"botPaused":false,"humanRepliedAt":null}
+  >>> ESPERADO: lanca, humanRepliedAt continua null, botPaused nao muda para true por esta chamada.
+
+### CASO E ###
+===== CASO E: sendPanelMessage grava humanRepliedAt so quando o envio da certo =====
+  retorno da rota: {"id":42,"direction":"OUT","content":"confirmando pedido","sentByName":"garcom1","createdAt":"2026-09-20T15:07:21.865Z","deliveryStatus":"ENVIADA","failureReason":null,"waMessageId":"wamid.47ce0061-369f-4bce-be7e-3ee23178244b"}
+  conversa depois: {"botPaused":true,"humanRepliedAt":"2026-09-20T15:07:21.863Z"}
+  >>> ESPERADO: deliveryStatus ENVIADA com waMessageId; humanRepliedAt preenchido; botPaused true.
+
+===================== CORRECAO 2: getRecentHistory filtrava FALHOU/PENDENTE =====================
+Bug apontado pelo usuario: getRecentHistory (conversationHistory.ts) nao
+filtrava por deliveryStatus, e mandava pra OpenAI mensagens OUT que o
+cliente nunca recebeu (FALHOU) ou que ainda nem tinham resposta da Graph
+(PENDENTE). O bot passava a acreditar que tinha dito algo que nunca saiu.
+
+Fix: so entram no historico do modelo mensagens IN, OUT com deliveryStatus
+ENVIADA, e OUT com deliveryStatus nulo (registro anterior a esta correcao).
+getConversationMessages (thread do painel) continua sem filtro -- FALHOU e
+PENDENTE ficam visiveis ali, que e outra consulta com outro proposito.
+
+Prova, saida bruta: conversa com 1 IN, 1 OUT ENVIADA, 1 OUT FALHOU, 1 OUT
+PENDENTE e 1 OUT com deliveryStatus nulo (simulando linha anterior a
+correcao).
+===== getRecentHistory (conversationId=48) =====
+  id=55 direction=IN deliveryStatus=null content="oi, queria um combo"
+  id=56 direction=OUT deliveryStatus=ENVIADA content="Claro! Vai ser retirada ou entrega?"
+  id=59 direction=OUT deliveryStatus=null content="mensagem de antes da 17.5, sem deliveryStatus"
+
+===== toChatFormat (o que realmente vai pra OpenAI) =====
+[
+  {
+    "role": "user",
+    "content": "oi, queria um combo"
+  },
+  {
+    "role": "assistant",
+    "content": "Claro! Vai ser retirada ou entrega?"
+  },
+  {
+    "role": "assistant",
+    "content": "mensagem de antes da 17.5, sem deliveryStatus"
+  }
+]
+
+contem FALHOU? false   >>> ESPERADO: false
+contem PENDENTE? false   >>> ESPERADO: false
+contem ENVIADA? true   >>> ESPERADO: true
+contem IN? true   >>> ESPERADO: true
+contem OUT com deliveryStatus nulo (mensagem anterior a 17.5)? true   >>> ESPERADO: true
+total de linhas no banco para esta conversa: 5 (1 IN + 4 OUT); getRecentHistory devolveu: 3   >>> ESPERADO: 3

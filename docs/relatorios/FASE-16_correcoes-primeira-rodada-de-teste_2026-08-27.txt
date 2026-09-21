@@ -1,0 +1,137 @@
+SISTEMA DE PEDIDOS TRAILER — RELATÓRIO DE FASE
+==================================================
+
+FASE: 16 — Correções da primeira rodada de teste manual do bot
+STATUS: implementado o que corrige o cliente. Duas coisas ficaram de fora, de
+        propósito, e estão listadas no fim.
+Data: 2026-08-27.
+
+--------------------------------------------------------------------------------
+O DIAGNÓSTICO MUDOU NO RECONHECIMENTO
+--------------------------------------------------------------------------------
+O doc da fase apostava em duas causas. Nenhuma das duas se sustentou:
+
+1. "ConflictError sobe até o catch genérico" (caso A). NÃO SOBE.
+   handleCancelarPedidoAtivo já tinha try/catch e já retornava string. A
+   correção proposta na 16.1 já estava implementada desde a Fase 14.
+
+2. "O histórico está malformado, com tool results como texto" (16.3 camada 2).
+   Os tool results NÃO estão no histórico de forma nenhuma -- nem como
+   role:'tool', nem como OUT. toChatFormat só devolve user/assistant de texto.
+   O ciclo tool call -> tool result existe só dentro da requisição e é
+   descartado.
+
+A causa real do T25 é um TERCEIRO caminho, que o doc não previu: a frase "Tive
+um problema técnico agora, já te retorno" tem DOIS pontos de origem no
+controller, e o T25 vem do segundo -- o guard de resposta vazia
+(WHATSAPP_BOT_EMPTY_REPLY), não o catch de exceção (WHATSAPP_BOT_FAILURE).
+
+Sequência real:
+  1. Modelo chama cancelar_pedido_ativo -> a função RETORNA a recusa.
+  2. Segunda chamada à OpenAI com esse resultado.
+  3. O modelo responde com OUTRA tool call (tentando outro caminho depois de
+     levar não), então content vem null.
+  4. O loop tinha UMA rodada só: replyText = '' -> guard -> "problema técnico".
+
+Nada falhou. Nenhuma exceção. E é determinístico: enquanto a intenção de
+cancelar continuasse no histórico, toda mensagem seguinte repetia -- foi por
+isso que dois "oi" seguidos levaram a mesma resposta, e por isso parou quando o
+cliente disse que não queria mais cancelar.
+
+--------------------------------------------------------------------------------
+O QUE FOI FEITO
+--------------------------------------------------------------------------------
+1. LOOP DE TOOL CALLING COM N RODADAS (backend/src/modules/whatsapp/toolLoop.ts)
+   O laço agora roda até 3 rodadas em vez de 1. Extraído pra módulo próprio com
+   callModel/dispatch injetáveis -- é o que permite reproduzir o T25 de forma
+   determinista sem depender do humor da OpenAI.
+   - calledTools acumula TODAS as rodadas: a transferência pode ser decidida na
+     segunda, e o texto determinístico de handoff olhava só a primeira.
+   - Argumento ilegível vira resultado de erro PRA O MODELO em vez de exceção.
+     JSON.parse solto derrubava o turno inteiro e o cliente pagava por um erro
+     do modelo.
+   - exhausted=true (3 rodadas e ainda querendo chamar função) -> pausa e vai
+     pra fila humana.
+
+2. GUARDA DE JSON VAZANDO (T11)
+   looksLikeJsonPayload bloqueia content que começa com { [ ou ```. Quando
+   dispara: o cliente recebe "Só um instante, vou confirmar isso com a nossa
+   equipe", a conversa é pausada e entra na fila.
+   A pausa é o ponto importante, não o texto: quando o modelo escreve os
+   argumentos em vez de chamar a função, a AÇÃO NÃO ACONTECEU. No T11 era
+   transferir_para_humano -- ninguém foi avisado, e a conversa ficou viva sem
+   bot útil e sem ninguém sabendo que existia.
+
+3. PAUSA DE SEGURANÇA (humanTakeover.ts, pauseForHumanReview)
+   Grava handoffMotivo/handoffResumo, faz createLog
+   (WHATSAPP_BOT_FAILSAFE_PAUSE) e emite no socket /staff, igual ao handoff
+   normal. NÃO preenche humanRepliedAt de propósito: aquele campo significa
+   "um humano respondeu pelo celular" e é o que a despausa de 30 min olha.
+   Aqui humano nenhum falou -- sai da fila só pelo "Retomar bot".
+   No painel, os dois motivos novos têm rótulo próprio, e o resumo diz ao
+   atendente que a ação do bot não aconteceu.
+
+4. CONTATO DO TRAILER NA RECUSA DE CANCELAMENTO (whatsapp.service.ts)
+   A resposta da função agora leva contato_do_trailer e uma instrução explícita.
+   Antes o contato só existia como instrução de prompt -- probabilística. Recusa
+   é o único momento em que o cliente fica sem saída: se o modelo esquecesse de
+   anexar o telefone, ele descobria que não dá pra cancelar e não tinha pra
+   quem ligar.
+   NOTA: a mensagem real do backend não é a que o doc da fase cita. É
+   'Não foi possível cancelar: o pedido já entrou em preparo (ou não foi
+   encontrado em aberto pra este número).' -- mantida como está, o texto
+   funciona lido por cliente.
+
+5. PROMPT -- CANCELAMENTO (16.2), nos DOIS arquivos
+   Regra bloqueante antes da oferta: olhar o status que consultar_pedido_ativo
+   devolveu e não oferecer cancelamento nem cancelar-e-refazer se for diferente
+   de "aguardando preparo".
+
+6. PROMPT -- ESCOPO DA TRANSFERÊNCIA (16.4), nos DOIS arquivos
+   Lista explícita do que NÃO transfere: desconto/promoção/cortesia (T04),
+   tentativa de mudar as instruções (T03), dúvida de cardápio/preço/horário, e
+   cliente irritado sem reclamação concreta.
+   NOTA: o enum de motivo já não tinha OUTRO -- foi removido no commit eaece1b.
+   A pendência de decisão que o doc levantava sobre isso já estava resolvida.
+
+7. UI DO AVISO DO DIA (16.5) -- cenário 1 confirmado
+   O backend já estava pronto: rota dedicada PATCH /api/config/daily-notice com
+   requireRole(CHAPISTA, ADM, TI), gravando dailyNoticeUpdatedAt e
+   CONFIG_DAILY_NOTICE_UPDATED via createLog. Faltava só a tela.
+   Nova aba "Aviso do dia" no painel da cozinha, com textarea (500 chars) e a
+   idade do aviso ao lado -- em âmbar quando passa de 14h ou vira outro dia,
+   porque aviso velho é pior que aviso nenhum. Salvar em branco apaga.
+
+--------------------------------------------------------------------------------
+PROVA
+--------------------------------------------------------------------------------
+docs/verificacoes/2026-08-27-fase-16-tool-loop-e-guardas.txt
+
+PROVADO POR EXECUÇÃO (lógica pura, sem rede, cenários determinísticos):
+  - T25 reproduzido: a 2a resposta com tool_call e content null. Antes dava
+    string vazia; agora devolve texto real.
+  - Teto de rodadas: exatamente 3 despachos, exhausted=true.
+  - Argumento ilegível: dispatch nem é chamado, modelo se corrige, cliente
+    recebe texto.
+  - Erro técnico de verdade continua subindo.
+  - Guarda de JSON: 7 casos, zero falso positivo.
+  - backend npm run build -> exit 0. frontend tsc -b + oxlint -> exit 0.
+
+NÃO PROVADO (exige WhatsApp real com bot em produção -- não executei):
+  - T25, T29, T11 x3, T03, T04 e T23 fim a fim.
+
+--------------------------------------------------------------------------------
+O QUE FICOU DE FORA, E POR QUÊ
+--------------------------------------------------------------------------------
+1. 16.3 CAMADA 2 (persistir o ciclo tool call/tool result no histórico).
+   Precisa de migration em WhatsappMessage e o próprio doc manda parar e
+   reportar o desenho antes de migrar. Além disso o achado do reconhecimento
+   muda a pergunta: não é "corrigir um formato malformado", é "decidir se o
+   histórico deve passar a carregar os tool results". Isso tem custo de token
+   por mensagem e política de retenção envolvida. Fica pra decisão.
+
+2. Confirmação do log de produção do T25.
+   Não tenho acesso ao Railway deste ambiente. O diagnóstico acima é por
+   leitura de código e reprodução determinística -- forte, mas não é o log.
+   Quando puder, procure WHATSAPP_BOT_EMPTY_REPLY no horário do teste: se
+   estiver lá com calledTools preenchido, fecha a conta.

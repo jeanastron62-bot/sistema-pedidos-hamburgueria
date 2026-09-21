@@ -1,0 +1,224 @@
+SISTEMA DE PEDIDOS TRAILER — RELATÓRIO DE FASE
+==================================================
+
+FASE: 15 — Embedded Signup (Tech Provider) e Coexistence
+STATUS: PARCIALMENTE CONCLUÍDA E PROVADA nesta sessão (2026-08-06). Tudo que
+podia ser implementado e testado de verdade SEM credenciais reais do Meta
+está feito e provado. O que só pode ser testado com App ID/Config ID/WABA
+reais está escrito, mas explicitamente marcado como não testado ao vivo.
+Concluído nesta rodada às: 2026-08-06 15:48 (horário local do servidor).
+
+Contexto: no início desta sessão a Fase 15 não tinha nenhum código, só o
+doc. O usuário confirmou nesta sessão: (1) tem só PARTE das credenciais do
+Meta (confirmado: META_APP_SECRET já existia; META_APP_ID e
+VITE_META_ES_CONFIG_ID ainda faltam); (2) escolheu CIFRAR o accessToken em
+repouso; (3) escolheu 30 minutos pra despausa automática do bot após
+atendimento humano.
+
+--------------------------------------------------------------------------------
+15.1 — SCHEMA + CRIPTOGRAFIA DO TOKEN — CONCLUÍDA E PROVADA
+--------------------------------------------------------------------------------
+
+- Migration `20260806180036_fase15_embedded_signup`: `WhatsappBusinessAccount`
+  (tabela nova) + `WhatsappConversation.humanRepliedAt` (coluna nova
+  nullable). Só `CREATE TABLE`/`ALTER TABLE ... ADD COLUMN`, sem `DROP` nem
+  `NOT NULL` sem default — critério do próprio doc de fase, conferido.
+- `backend/src/utils/tokenCrypto.ts` — AES-256-GCM nativo do Node
+  (`crypto`), sem dependência nova. `encryptToken`/`decryptToken`/
+  `maskToken`. Chave em `WHATSAPP_TOKEN_ENCRYPTION_KEY` (novo, 32 bytes
+  base64, gerada e já colocada no `.env` local do projeto).
+- Prova real (`verify-tmp.ts`, rodado e apagado): round-trip cifra/decifra
+  bate exatamente; payload adulterado é rejeitado pelo GCM
+  ("Unsupported state or unable to authenticate data") — confirma que
+  violação de integridade é detectada, não só a confidencialidade.
+
+--------------------------------------------------------------------------------
+15.4 — smb_message_echoes + DESPAUSA AUTOMÁTICA (30min) — CONCLUÍDA E PROVADA
+--------------------------------------------------------------------------------
+
+- `backend/src/modules/whatsapp/humanTakeover.ts`: `handleMessageEcho()`
+  (pausa o bot, grava a mensagem do humano como `OUT`, `createLog`
+  `WHATSAPP_HUMAN_TAKEOVER`) e `shouldAutoUnpause()` (função pura, mesmo
+  padrão preguiçoso do TTL de sessão da Fase 14.5 — sem cron).
+- `HUMAN_TAKEOVER_UNPAUSE_MINUTES = 30`, decisão do usuário registrada no
+  código com a data da decisão.
+- `whatsapp.controller.ts` ligado: webhook agora extrai `message_echoes`
+  além de `messages`; despausa só se `botPaused && humanRepliedAt` > 30min
+  (pausa por `transferir_para_humano` do bot, sem `humanRepliedAt`,
+  continua exigindo `/resume` manual — sem mudança de comportamento aí).
+
+BUG REAL ENCONTRADO E CORRIGIDO DURANTE A IMPLEMENTAÇÃO (não estava no doc
+de fase): `findOrCreateConversation` (reaproveitada de Fase 13/14) sempre
+grava `lastInboundAt = now`, correto pra mensagem do CLIENTE. Um eco é o
+NEGÓCIO respondendo — reaproveitar a mesma função contaminaria
+`lastInboundAt` com atividade que não é do cliente, afetando o cálculo do
+TTL de sessão (Fase 14.5) de forma sutil e silenciosa. Corrigido com um
+upsert próprio em `handleMessageEcho` que não toca `lastInboundAt`. Achado
+e corrigido antes de qualquer teste, não depois.
+
+Prova real, ponta a ponta, com servidor rodando de verdade
+(docs/verificacoes/2026-08-06-fase-15.4-smb-message-echoes.txt):
+- `shouldAutoUnpause`: 6 casos de fronteira (não pausado; pausado sem
+  humano; 10min; exatamente 30min; 31min; 4h) — todos bateram o esperado.
+- POST de eco sintético (assinatura HMAC real) → 200, conversa fica
+  `botPaused: true`, `humanRepliedAt` preenchido, `lastInboundAt` continua
+  `null` (confirma a correção do bug acima), mensagem `OUT` gravada com
+  conteúdo correto.
+- Reenvio do mesmo eco (mesmo `waMessageId`) → 200, mas sem segunda linha
+  de mensagem (idempotência confirmada por contagem antes/depois: 1 e 1).
+- `humanRepliedAt` ajustado pra simular 31 minutos atrás (dado real no
+  banco, não mock) → mensagem nova do cliente → log real
+  `[WHATSAPP_HUMAN_TAKEOVER]` → `[WHATSAPP_BOT_AUTO_RESUME]` →
+  `[WHATSAPP_BOT_REPLY]` com resposta computada de verdade pela OpenAI
+  (gastou 1 chamada real, mesma decisão de custo que a Fase 14 já tomou
+  pra provas pontuais) → estado final no banco: `botPaused: false`. O
+  envio real ao Graph API falhou por token de teste expirado — mesma
+  classe de falha esperada e já documentada na prova da Fase 14, não é bug
+  desta fase.
+- Dados de teste (conversa, mensagens) removidos ao final.
+
+--------------------------------------------------------------------------------
+15.3 — BACKEND (troca de código, subscribe, resolução por phoneNumberId) —
+ESCRITA, PARCIALMENTE PROVADA (o que não precisa de credencial real está
+provado; o fluxo OAuth completo não pôde ser testado)
+--------------------------------------------------------------------------------
+
+Pesquisa de documentação atual da Meta feita ANTES de escrever código (como
+o doc de fase exige), 2026-08-06:
+- `FB.login()`: `config_id`, `response_type: 'code'`,
+  `override_default_response_type: true`, `extras: { setup: {} }` —
+  confirmado, o esqueleto do doc de fase estava certo na forma geral.
+- Achado novo (não estava no doc original): o `code` retornado tem
+  **TTL de 30 segundos** — o backend precisa trocar rápido, sem fila/retry
+  manual que ultrapasse essa janela.
+- Eventos de sessão confirmados: `FINISH`, `CANCEL`,
+  `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` (Coexistence, `version: 3`),
+  e mais 3 variantes que o doc original não mencionava
+  (`FINISH_ONLY_WABA`, `FINISH_OBO_MIGRATION`,
+  `FINISH_GRANT_ONLY_API_ACCESS`).
+- Confirmado: em Coexistence, o passo de registrar o número é pulado (já
+  vem registrado) — bate com o doc original.
+- Achado novo: Coexistence exige sincronização de contatos/histórico em até
+  24h pós-onboarding (Meta trata isso como requisito, não sugestão) — a
+  Fase 15 já marca `smb_app_state_sync` como fora de escopo; isso vira uma
+  pendência com prazo mais concreto do que "fase futura sem data".
+- Prazo de migração pra Embedded Signup v4 confirmado: **15/10/2026**
+  (faltam ~2 meses a partir de hoje).
+- NÃO confirmado na doc pública: o nome exato do campo `featureType` dentro
+  de `extras` pra ativar Coexistence no `FB.login()` — só aparece
+  documentado como `extras: { setup: {} }` no fluxo padrão. Precisa ser
+  confirmado direto no App Dashboard (Embedded Signup Builder) na hora de
+  configurar — não cravado por doc só. O endpoint exato de troca de código
+  (`oauth/access_token`) também não veio explícito nas páginas buscadas
+  (a doc redireciona pra um guia separado que não renderizou conteúdo
+  técnico via fetch) — implementado com o endpoint OAuth padrão e estável
+  do Graph API (o mesmo usado por todo Facebook Login há anos), mas
+  precisa de confirmação final contra uma chamada real.
+
+Implementado:
+- `backend/src/modules/whatsapp/embeddedSignup.service.ts`:
+  `exchangeCodeForToken`, `fetchWabaPhoneNumber` (nunca confia no que o
+  frontend alega — busca a API de verdade com o token recém-trocado),
+  `subscribeAppToWaba`, `connectBusinessAccount` (upsert em
+  `WhatsappBusinessAccount`, token cifrado, `createLog`
+  `WHATSAPP_WABA_CONNECTED` sem o token), `getActiveBusinessAccount`,
+  `disconnectBusinessAccount` (`active: false`, não apaga a linha).
+- Rotas em `whatsapp.routes.ts`: `POST /connect`, `GET /business-account`,
+  `PATCH /business-account/:id/disconnect` — todas `requireAuth` +
+  `requireRole(ADM, TI)`.
+- **Rewire de `sendMessage.ts`** (achado real da Fase 15.0, corrigido
+  agora): antes, `sendWhatsappText` sempre usava a conta global de
+  variável de ambiente. Agora resolve a conta pelo `phoneNumberId` de
+  origem (extraído de `metadata.phone_number_id` no payload do webhook,
+  propagado por `extractMessages`) — com fallback pras variáveis de
+  ambiente antigas enquanto nenhuma `WhatsappBusinessAccount` estiver
+  conectada de verdade (preserva o comportamento já provado da Fase 13/14
+  sem quebrar nada agora).
+
+Prova real (docs/verificacoes/2026-08-06-fase-15.3-rotas-conexao-whatsapp.txt),
+com usuários de teste reais criados/logados/removidos:
+- `GET /business-account` como TI, nada conectado → 200, `null`.
+- `GET /business-account` como ENTREGADOR → 403.
+- `GET /business-account` sem token → 401.
+- `POST /connect` como TI sem `code` → 400.
+- `POST /connect` como ENTREGADOR → 403.
+
+NÃO TESTADO (motivo: precisa de App ID + Config ID + App Secret válidos no
+Meta e uma WABA real — não pode ser simulado sem inventar prova, o que este
+projeto proíbe explicitamente): a troca de `code` real por token, a busca
+real de número da WABA, a assinatura real de webhooks, e por consequência
+o caminho completo de `connectBusinessAccount` com dado real.
+
+--------------------------------------------------------------------------------
+15.2 — FRONTEND (aba de conexão) — ESCRITA E TESTADA NO NAVEGADOR (exceto o
+que depende do popup real do Facebook)
+--------------------------------------------------------------------------------
+
+- `frontend/src/components/admin/WhatsappConnection.tsx`: estados
+  desconectado/conectado, botão "Conectar WhatsApp" / "Desconectar", selo
+  Coexistence. SDK do Facebook carregado sob demanda (só quando a aba
+  monta, não em `index.html`) — decisão deliberada pra não pesar no bundle
+  do cardápio público (regra já existente do projeto). Session logging
+  (`window.addEventListener('message', ...)`, filtrado por origem
+  `facebook.com`) implementado como a Meta exige pra Coexistence.
+- Aba "WhatsApp" adicionada em `PanelADM.tsx` e `PanelTI.tsx`, mesmo padrão
+  de `Tabs`/`TABS` já usado pelas outras abas.
+- `frontend/.env.example` criado (primeiro do projeto) com
+  `VITE_META_APP_ID`/`VITE_META_ES_CONFIG_ID` — públicos por natureza
+  (Facebook App ID e Config ID não são segredo, só o App Secret é).
+- `response_type: 'code'` sempre, nunca `token` — o App Secret nunca
+  aparece em nenhum arquivo de `frontend/` (conferido: só existe em
+  `backend/src/config/env.ts` e `backend/.env`).
+
+Prova real no navegador (docs/verificacoes/2026-08-06-fase-15.2-tela-conexao-whatsapp.txt),
+login real como TI, servidor real:
+- `npm run build` do frontend sem erro.
+- Login → aba "WhatsApp" presente na lista, entre "Configurações" e "Logs".
+- Estado desconectado renderiza corretamente.
+- Clique em "Conectar WhatsApp" sem `VITE_META_APP_ID`/`VITE_META_ES_CONFIG_ID`
+  configurados → mensagem de erro clara, SEM tentar chamar `FB.login` com
+  `config_id` undefined (não deixou vazar um erro confuso do SDK do
+  Facebook). Zero erros no console do navegador.
+
+NÃO TESTADO: carregamento real do SDK, popup real de login, captura real
+do evento de sessão, estado "conectado" da tela — tudo depende de
+`VITE_META_APP_ID`/`VITE_META_ES_CONFIG_ID` reais, que o usuário ainda não
+tem.
+
+--------------------------------------------------------------------------------
+DOCKERFILE — ATUALIZADO (Fase 10 se cruza aqui)
+--------------------------------------------------------------------------------
+
+Achado: Vite embute `VITE_*` no bundle em TEMPO DE BUILD, não de runtime.
+Sem ajuste, configurar as variáveis só no serviço do Railway não teria
+efeito nenhum no bundle já buildado. Adicionado `ARG`/`ENV` no estágio
+`frontend-builder` do `Dockerfile` pra receber essas duas variáveis como
+build arg. NÃO TESTADO (Docker CLI não está disponível neste ambiente) —
+sintaxe revisada manualmente, mas a build real da imagem não foi exercitada
+nesta sessão.
+
+--------------------------------------------------------------------------------
+O QUE FALTA — TUDO bloqueado por coisas que só o usuário/cliente pode
+prover, não por código pendente
+--------------------------------------------------------------------------------
+
+1. Criar o App no Meta for Developers (se ainda não existir) e pegar
+   `META_APP_ID` (público) — hoje só `META_APP_SECRET` existe no `.env`.
+2. Criar a "Facebook Login for Business Configuration" (Embedded Signup
+   Builder, versão 4 — prazo 15/10/2026) e pegar `VITE_META_ES_CONFIG_ID`.
+3. Confirmar no App Dashboard o nome exato do campo de `extras` que ativa
+   Coexistence (não veio explícito na doc pública consultada).
+4. Uma WABA de teste pra rodar o fluxo de ponta a ponta e gerar as duas
+   chamadas com 200 que o material do App Review (15.5) exige.
+5. Preencher `frontend/.env` (local) e os build args do Railway em
+   produção com os valores reais.
+6. Rodar o fluxo real, corrigir o que a resposta real da Meta divergir
+   deste código (o próprio doc de fase avisa: a doc muda, "referência, não
+   verdade").
+7. Decidir e implementar (fora de escopo desta fase, registrado pelo doc
+   original): sincronização de `smb_app_state_sync` dentro da janela de
+   24h que a Meta exige pra Coexistence.
+
+--------------------------------------------------------------------------------
+Relatório gerado em: 2026-08-06 15:48, sessão de continuação de fases.
+--------------------------------------------------------------------------------

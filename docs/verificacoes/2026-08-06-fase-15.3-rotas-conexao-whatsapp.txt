@@ -1,0 +1,17 @@
+=== Fase 15.2/15.3 -- rotas de conexao WhatsApp, controle de acesso ===
+=== a) GET /business-account como TI, nada conectado ainda -- esperado 200 + null ===
+status: 200 body: null
+
+=== b) GET /business-account como ENTREGADOR -- esperado 403 ===
+status: 403 body: {"error":"Acesso negado"}
+
+=== c) GET /business-account sem token -- esperado 401 ===
+status: 401 body: {"error":"Token não fornecido"}
+
+=== d) POST /connect como TI, sem "code" -- esperado 400 ===
+status: 400 body: {"error":"code é obrigatório."}
+
+=== e) POST /connect como ENTREGADOR -- esperado 403 ===
+status: 403 body: {"error":"Acesso negado"}
+
+usuários de teste removidos.

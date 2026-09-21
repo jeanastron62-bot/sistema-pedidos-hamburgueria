@@ -1,0 +1,77 @@
+FASE 15.3 -- ENDPOINT DE CONEXAO (EMBEDDED SIGNUP) -- PROVA
+Data: 2026-08-27 | Postgres 16 local (porta 5433) + servidor tsx local (porta 3111)
+Endpoint: POST /api/webhook/whatsapp/connect (requireAuth + requireRole(ADM, TI))
+Script: backend/verify-tmp.ts (descartavel, apagado depois desta execucao).
+
+O QUE ESTA PROVA NAO E: o fluxo real do Embedded Signup nao foi executado.
+O 'code' e de uso unico e so existe numa sessao real, com a dona e o celular
+do trailer presentes. Nada aqui simula o caminho feliz.
+
+================ SAIDA DO CLIENTE ================
+=== 1. sem token -> esperado 401 ===
+[401] POST /connect sem Authorization
+       resposta: {"error":"Token não fornecido"}
+
+=== 2. token de GARCOM -> esperado 403 ===
+[403] POST /connect como GARCOM
+       resposta: {"error":"Acesso negado"}
+
+=== 3. ADM com body inválido (sem code) -> esperado 400 do Zod ===
+[400] POST /connect sem code
+       resposta: {"error":"Erro de validação","details":[{"code":"invalid_type","expected":"string","received":"undefined","path":["code"],"message":"Required"}]}
+
+=== 3b. ADM com body inválido (sem wabaId) -> esperado 400 do Zod ===
+[400] POST /connect sem wabaId
+       resposta: {"error":"Erro de validação","details":[{"code":"invalid_type","expected":"string","received":"undefined","path":["wabaId"],"message":"Required"}]}
+
+=== 4. ADM com code falso -> erro tratado, nada gravado ===
+[502] POST /connect com code falso
+       resposta: {"error":"Falha ao trocar o código por token no Graph API (HTTP 403)."}
+
+=== ESTADO DO BANCO DEPOIS DOS DISPAROS ===
+whatsapp_business_accounts: 0 linha(s)
+logs WHATSAPP_ONBOARDED: 0
+
+================ LOG DO SERVIDOR (caso 4) ================
+}
+[WHATSAPP_ONBOARDING_EXCHANGE_FAILED] { graph: 'HTTP 403' }
+{
+  status: 502,
+  message: 'Falha ao trocar o código por token no Graph API (HTTP 403).'
+}
+
+================ VARREDURA DE SEGREDO NO LOG ================
+Busca por META_APP_SECRET do .env de teste, pelo 'code' enviado, por
+'client_secret' e por 'access_token' no log inteiro do servidor:
+ocorrencias encontradas: 0
+Zero. So status e a descricao de erro do Graph aparecem, como exigido.
+
+================ MIGRATION ================
+-- AlterTable
+ALTER TABLE "whatsapp_business_accounts" ADD COLUMN     "is_on_biz_app" BOOLEAN,
+ADD COLUMN     "platform_type" TEXT;
+
+Criterio: aditiva. Duas colunas nullable, nenhum DROP, nenhum NOT NULL sem
+default, nada tocando dado existente. (A spec pedia 'so CREATE TABLE'
+supondo tabela nova; a tabela ja existe desde 06/08, entao o equivalente
+aditivo e ADD COLUMN.)
+
+================ BUILD ================
+backend: npm run build (tsc) -> exit 0
+frontend: npm run build (vite) -> exit 0, built in 3.03s
+
+================ LEITURA DO RESULTADO ================
+1. Sem token           -> 401 'Token nao fornecido'. requireAuth barra antes de tudo.
+2. Token de GARCOM     -> 403 'Acesso negado'. requireRole(ADM, TI) barra a role errada.
+3. ADM sem 'code'      -> 400 do Zod, apontando o campo. Idem 3b sem 'wabaId'.
+4. ADM com code falso  -> 502 com mensagem descritiva; NENHUMA linha criada em
+                          whatsapp_business_accounts (0 linhas, conferido por query)
+                          e NENHUM log WHATSAPP_ONBOARDED (0). A falha no primeiro
+                          passo impede os seguintes -- nada e gravado pela metade.
+
+RESSALVA IMPORTANTE SOBRE O CASO 4: o HTTP 403 que aparece na mensagem NAO veio
+da Meta. graph.facebook.com esta bloqueado pelo proxy de egresso deste ambiente
+(curl direto ao mesmo host devolve 000, sem conexao). O que esta provado e o
+TRATAMENTO da falha -- status 502, mensagem sem segredo, nada gravado, log limpo.
+Que a Meta rejeita um code falso com uma mensagem especifica NAO foi provado e
+so sera visto na operacao real.

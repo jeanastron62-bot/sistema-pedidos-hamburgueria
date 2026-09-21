@@ -1,0 +1,41 @@
+=== Revisao geral antes do commit/push (2026-08-07) ===
+Objetivo: confirmar que as mudancas da Fase 15 (que tocaram arquivos
+compartilhados com as Fases 13/14: whatsapp.service.ts, sendMessage.ts,
+whatsapp.controller.ts) nao quebraram nada que ja estava provado.
+
+=== 1) build backend (tsc) ===
+BUILD_EXIT=0, sem erros.
+
+=== 2) build frontend (tsc -b && vite build) ===
+BUILD_EXIT=0, sem erros. Bundle gerado normalmente.
+
+=== 3) npx prisma migrate status ===
+"7 migrations found in prisma/migrations"
+"Database schema is up to date!"
+
+=== 4) boot limpo do servidor (restart completo, nao so tsx watch reload) ===
+"Servidor rodando na porta 3000 em ambiente development" -- sem erro de
+variavel de ambiente faltando (confirma que META_APP_ID e
+WHATSAPP_TOKEN_ENCRYPTION_KEY, adicionados nesta sessao, estao presentes e
+validos no .env local).
+
+=== 5) regressao do fluxo core do webhook (Fase 13/14), com servidor real ===
+a) POST com assinatura invalida -> 401 (esperado 401) -- OK
+b) POST com assinatura valida, "oi" -> 200 (esperado 200) -- OK
+   conversa apos processar: botPaused=false (esperado false) -- OK
+   1 mensagem IN gravada com o conteudo correto -- OK
+c) reenvio do MESMO waMessageId -> 200, contagem de IN antes=1 depois=1
+   (dedup continua funcionando) -- OK
+
+Log do servidor confirma que o bot processou a mensagem e tentou enviar a
+resposta real via sendWhatsappText -- resolveSendCredentials (Fase 15.3)
+corretamente caiu no fallback de variavel de ambiente (nenhuma
+WhatsappBusinessAccount cadastrada ainda pro phoneNumberId de teste), e a
+falha foi a mesma classe ja documentada nas Fases 14/15.4 (OAuthException,
+token de teste expirado) -- nao e regressao nova, e exatamente o
+comportamento esperado com credenciais de teste.
+
+Dados de teste (conversa/mensagens) removidos ao final.
+
+CONCLUSAO: nenhuma regressao encontrada nas Fases 13/14 depois das mudancas
+da Fase 15. Backend e frontend buildam limpos. Pronto para commit.

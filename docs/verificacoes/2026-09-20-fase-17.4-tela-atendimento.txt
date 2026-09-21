@@ -1,0 +1,246 @@
+Prova real em navegador (Playwright, Pixel 7 -- mobile, que e a condicao
+de operacao declarada na fase), contra o codigo desta branch.
+
+===================== Rodada 1 -- achou bug real (mensagem duplicada) =====================
+=== ROTULO DA ABA === Atendimento (1)
+=== TEXTO DA ABA (visao Pendentes, default) ===
+  Todos
+  Pedidos do Site (!)
+  Aguardando
+  Preparando
+  Pronto
+  Entregue
+  Cancelado
+  Atendimento (1)
+  Atendimento
+  
+  Conversas do WhatsApp das últimas 12h — o turno atual. As que precisam de resposta vêm primeiro.
+  
+  Pendentes
+  Todas
+  5531900009001
+  RECLAMAÇÃO
+  
+  Cliente reclamou que o lanche veio frio
+  
+  esperando há 1h · 1 não lida
+  
+  Retomar bot
+=== TEXTO DA ABA (visao Todas) ===
+  Todos
+  Pedidos do Site (!)
+  Aguardando
+  Preparando
+  Pronto
+  Entregue
+  Cancelado
+  Atendimento (1)
+  Atendimento
+  
+  Conversas do WhatsApp das últimas 12h — o turno atual. As que precisam de resposta vêm primeiro.
+  
+  Pendentes
+  Todas
+  5531900009001
+  RECLAMAÇÃO
+  
+  Cliente reclamou que o lanche veio frio
+  
+  esperando há 1h · 1 não lida
+  
+  Retomar bot
+  5531900009002
+  
+  Temos hot dog, hamburguer e macarrao na chapa!
+  
+  última msg há 3h · 1 não lida
+=== TEXTO DA THREAD ABERTA ===
+  Todos
+  Pedidos do Site (!)
+  Aguardando
+  Preparando
+  Pronto
+  Entregue
+  Cancelado
+  Atendimento (1)
+  5531900009001
+  RECLAMAÇÃO
+  Retomar bot
+  
+  Cliente reclamou que o lanche veio frio
+  
+  meu lanche chegou frio
+  
+  19:37
+campo de resposta visivel? true
+botao voltar (deve ser >= 48x48): {"x":16,"y":169,"width":48,"height":48}
+botao enviar (deve ser >= 48x48): {"x":342,"y":708.296875,"width":54,"height":48}
+=== TEXTO DA THREAD APOS ENVIAR ===
+  Todos
+  Pedidos do Site (!)
+  Aguardando
+  Preparando
+  Pronto
+  Entregue
+  Cancelado
+  Atendimento
+  5531900009001
+  RECLAMAÇÃO
+  Retomar bot
+  
+  Cliente reclamou que o lanche veio frio
+  
+  meu lanche chegou frio
+  
+  19:37
+  
+  GARCOM1
+  
+  Oi! Ja vou verificar seu pedido, um momento.
+  
+  20:37
+  
+  GARCOM1
+  
+  Oi! Ja vou verificar seu pedido, um momento.
+  
+  20:37
+=== ERROS DE PAGINA/CONSOLE ===
+  console: Failed to load resource: net::ERR_CERT_AUTHORITY_INVALID
+=== REQUISICOES /api COM ERRO ===
+  nenhuma
+
+===================== Rodada 2 -- apos corrigir a corrida socket/HTTP =====================
+=== ROTULO DA ABA === Atendimento (1)
+=== TEXTO DA ABA (visao Pendentes, default) ===
+  Todos
+  Pedidos do Site (!)
+  Aguardando
+  Preparando
+  Pronto
+  Entregue
+  Cancelado
+  Atendimento (1)
+  Atendimento
+  
+  Conversas do WhatsApp das últimas 12h — o turno atual. As que precisam de resposta vêm primeiro.
+  
+  Pendentes
+  Todas
+  5531900009001
+  RECLAMAÇÃO
+  
+  Cliente reclamou que o lanche veio frio
+  
+  esperando há 1h · 1 não lida
+  
+  Retomar bot
+=== TEXTO DA ABA (visao Todas) ===
+  Todos
+  Pedidos do Site (!)
+  Aguardando
+  Preparando
+  Pronto
+  Entregue
+  Cancelado
+  Atendimento (1)
+  Atendimento
+  
+  Conversas do WhatsApp das últimas 12h — o turno atual. As que precisam de resposta vêm primeiro.
+  
+  Pendentes
+  Todas
+  5531900009001
+  RECLAMAÇÃO
+  
+  Cliente reclamou que o lanche veio frio
+  
+  esperando há 1h · 1 não lida
+  
+  Retomar bot
+  5531900009002
+  
+  Temos hot dog, hamburguer e macarrao na chapa!
+  
+  última msg há 3h · 1 não lida
+=== TEXTO DA THREAD ABERTA ===
+  Todos
+  Pedidos do Site (!)
+  Aguardando
+  Preparando
+  Pronto
+  Entregue
+  Cancelado
+  Atendimento (1)
+  5531900009001
+  RECLAMAÇÃO
+  Retomar bot
+  
+  Cliente reclamou que o lanche veio frio
+  
+  meu lanche chegou frio
+  
+  19:39
+campo de resposta visivel? true
+botao voltar (deve ser >= 48x48): {"x":16,"y":169,"width":48,"height":48}
+botao enviar (deve ser >= 48x48): {"x":342,"y":708.296875,"width":54,"height":48}
+=== TEXTO DA THREAD APOS ENVIAR ===
+  Todos
+  Pedidos do Site (!)
+  Aguardando
+  Preparando
+  Pronto
+  Entregue
+  Cancelado
+  Atendimento
+  5531900009001
+  RECLAMAÇÃO
+  Retomar bot
+  
+  Cliente reclamou que o lanche veio frio
+  
+  meu lanche chegou frio
+  
+  19:39
+  
+  GARCOM1
+  
+  Oi! Ja vou verificar seu pedido, um momento.
+  
+  20:39
+=== ERROS DE PAGINA/CONSOLE ===
+  console: Failed to load resource: net::ERR_CERT_AUTHORITY_INVALID
+=== REQUISICOES /api COM ERRO ===
+  nenhuma
+
+===================== Rotulos de status (FALHOU / PENDENTE <5min / PENDENTE >5min) =====================
+Todos
+Pedidos do Site (!)
+Aguardando
+Preparando
+Pronto
+Entregue
+Cancelado
+Atendimento (1)
+5531900009099
+RECLAMAÇÃO
+Retomar bot
+
+alguem ai?
+
+20:10
+
+mensagem que falhou ha 20 min
+
+não entregue — Error validating access token
+20:20
+
+mensagem pendente ha 10 min (deve mostrar nao sei se chegou)
+
+não sei se chegou
+20:30
+
+mensagem pendente ha 1 min (deve mostrar enviando)
+
+enviando…
+20:39

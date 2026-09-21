@@ -1,0 +1,89 @@
+SISTEMA DE PEDIDOS TRAILER — RELATÓRIO DE FASE
+==================================================
+
+FASE: 10 — Backup e recuperação + deploy de produção
+STATUS: DESBLOQUEADA nesta sessão (usuário confirmou que o cliente já
+aprovou o contrato/operação real). Preparação de código feita e provada
+onde dava pra provar sem acesso à conta do Railway. Deploy real e as
+configurações que só existem no dashboard do Railway NÃO foram executados.
+Concluído nesta rodada às: 2026-08-06 15:48 (horário local do servidor).
+
+--------------------------------------------------------------------------------
+POR QUE O DEPLOY REAL NÃO FOI FEITO NESTA SESSÃO
+--------------------------------------------------------------------------------
+
+Dois motivos, um técnico e um de risco:
+
+1. **Não há Railway CLI neste ambiente** (`command -v railway` → não
+   encontrado). Migrar o serviço pro plano Hobby, habilitar o backup nativo
+   do Railway (aba Backups) e rodar o deploy real são ações que só existem
+   no dashboard web do Railway ou via CLI autenticado com a conta do
+   usuário — nenhuma das duas coisas está disponível aqui.
+2. Mesmo se estivesse: deploy de produção é uma ação difícil de reverter e
+   que afeta o sistema em uso real (trailer aberto das 18h às 05h) — o tipo
+   de ação que pede confirmação explícita no momento exato de executar, não
+   só a confirmação geral de "o cliente aprovou o contrato" que já foi
+   dada. Preparei tudo pra ficar a um comando de distância, mas não apertei
+   esse comando sozinho.
+
+--------------------------------------------------------------------------------
+O QUE FOI PREPARADO E PROVADO NESTA SESSÃO
+--------------------------------------------------------------------------------
+
+**Dockerfile revisado e corrigido** (achado real, ligado à Fase 15): Vite
+embute variáveis `VITE_*` no bundle em tempo de BUILD, não de runtime.
+Adicionado `ARG VITE_META_APP_ID` / `ARG VITE_META_ES_CONFIG_ID` no estágio
+`frontend-builder`, com `ENV` correspondente, pra essas variáveis poderem
+ser passadas como build arg no Railway. Sem isso, configurá-las só como
+variável de ambiente do serviço não teria efeito nenhum no bundle já
+compilado. NÃO TESTADO — Docker CLI não disponível neste ambiente; sintaxe
+revisada manualmente, mas a imagem não foi de fato construída.
+
+**Script de backup independente** — `backend/scripts/backup-db.sh`
+(Camada 2 do plano já documentado no CONTEXTO.md seção 2.5): `pg_dump` +
+compressão + upload via `aws s3 cp` pra qualquer object storage
+compatível com S3 (Backblaze B2, Cloudflare R2, ou outro — a escolha do
+provedor continua sua, o script não amarra nisso). Sintaxe validada
+(`sh -n`), mas a execução real não foi testada — precisa das credenciais
+do bucket, que não existem ainda.
+
+**Agendador, inativo de propósito** —
+`.github/workflows/backup-db.yml.example`: roda o script acima todo dia às
+06:00 UTC (03:00 horário de Brasília, depois do expediente fechar).
+Extensão `.yml.example` de propósito — o GitHub Actions só reconhece
+`.yml`/`.yaml`, então isso não vira um workflow ativo sozinho. Pra ativar:
+renomear pra `.yml` e cadastrar os secrets no GitHub (nunca no código).
+
+--------------------------------------------------------------------------------
+CHECKLIST DO QUE FALTA — tudo ação de dashboard/conta, não código
+--------------------------------------------------------------------------------
+
+1. [ ] Migrar o serviço do Railway do trial pro plano Hobby (ou superior).
+2. [ ] Serviço Postgres → aba Backups → habilitar agendamento nativo
+       (Camada 1, mínimo Daily).
+3. [ ] Escolher o provedor de object storage externo (B2 ou R2) e criar um
+       bucket dedicado a backup.
+4. [ ] Gerar credenciais desse bucket, cadastrar como Secrets no GitHub
+       (`BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `AWS_ACCESS_KEY_ID`,
+       `AWS_SECRET_ACCESS_KEY`) e como `DATABASE_URL`/`DATABASE_PUBLIC_URL`.
+5. [ ] Renomear `backup-db.yml.example` pra `.yml`, rodar manualmente uma
+       vez (Actions → Run workflow) e CONFIRMAR o arquivo aparecendo no
+       bucket — não considerar cumprido só por o workflow não ter dado erro.
+6. [ ] Testar restauração de verdade numa instância Postgres NOVA (nunca
+       sobrescrever produção) e conferir contagem de registros em `Order`,
+       `User`, `MenuItem` batendo com o momento do backup — regra explícita
+       do CONTEXTO.md ("prova, não configuração").
+7. [ ] Preencher as variáveis de ambiente de produção reais no serviço do
+       Railway (`JWT_SECRET`, `DATABASE_URL`, `META_*`,
+       `WHATSAPP_TOKEN_ENCRYPTION_KEY`, `OPENAI_API_KEY` — nunca coladas em
+       chat, geradas/copiadas direto pro Railway).
+8. [ ] Configurar `VITE_META_APP_ID`/`VITE_META_ES_CONFIG_ID` como build
+       args do serviço no Railway (Settings → Build), não só como variável
+       de runtime.
+9. [ ] Deploy real (`npx prisma migrate deploy` roda automaticamente no
+       `CMD` do Dockerfile, antes do servidor subir — já preparado).
+10. [ ] Confirmar `TZ=America/Sao_Paulo` está setado no serviço.
+
+--------------------------------------------------------------------------------
+Relatório gerado em: 2026-08-06 15:48, sessão de continuação de fases.
+--------------------------------------------------------------------------------

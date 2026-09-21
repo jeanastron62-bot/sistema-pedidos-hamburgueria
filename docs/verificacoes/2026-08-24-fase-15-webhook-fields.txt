@@ -1,0 +1,99 @@
+FASE 15.1 -- ROTEAMENTO DO WEBHOOK POR change.field -- PROVA
+Data: 2026-08-24 | Postgres 16 local (porta 5433) + servidor tsx local (porta 3111)
+Payloads sintéticos assinados com HMAC-SHA256 real (mesmo segredo do .env local de teste).
+Script: backend/verify-tmp.ts (descartável, apagado depois desta execução).
+
+ESPERADO: 200 nos cinco fields do doc + no field desconhecido; 401 na assinatura
+adulterada; nenhuma exceção não tratada; cada field indo pelo seu caminho no log.
+
+================ SAÍDA DO CLIENTE (verify-tmp.ts) ================
+=== 1. field: messages (comportamento da Fase 13/14, inalterado) ===
+[200] messages
+
+=== 2. field: smb_message_echoes (núcleo da fase) ===
+[200] smb_message_echoes
+
+=== 3. field: account_update (PARTNER_REMOVED) ===
+[200] account_update
+
+=== 4. field: history (aceita e descarta, com contagem) ===
+[200] history
+
+=== 5. field: smb_app_state_sync (aceita e descarta, com contagem) ===
+[200] smb_app_state_sync
+
+=== 6. field desconhecido (nunca pode lançar) ===
+[200] message_template_status_update
+
+=== 7. assinatura inválida (a validação da Fase 13 continua de pé) ===
+[401] messages com assinatura adulterada
+
+=== 8. mesmo eco entregue duas vezes (guarda de duplicata) ===
+[200] eco (1a entrega)
+[200] eco (reentrega do mesmo waMessageId)
+
+=== ESTADO NO BANCO DEPOIS DOS 8 DISPAROS ===
+conversa 5531900000001: botPaused=false humanRepliedAt=null lastInboundAt=preenchido
+conversa 5531900000002: botPaused=true humanRepliedAt=preenchido lastInboundAt=null
+conversa 5531900000003: botPaused=true humanRepliedAt=preenchido lastInboundAt=null
+mensagem wamid.TESTE_ECHO_1 direction=OUT content="oi amor, hoje tem sim!"
+mensagem wamid.TESTE_IN_1 direction=IN content="oi, queria um combo"
+mensagem wamid.TESTE_ECHO_DUP direction=OUT content="já anotei aqui"
+log WHATSAPP_DISCONNECTED por "Meta (webhook)" details={"event":"PARTNER_REMOVED","disconnectionInfo":{"current_limit":"TIER_1K","disconnect_reason":"PRIMARY_INACTIVITY"}}
+log WHATSAPP_HUMAN_TAKEOVER por "WhatsApp Business App" details={"phone":"5531900000002","waMessageId":"wamid.TESTE_ECHO_1","conversationId":1}
+log WHATSAPP_HUMAN_TAKEOVER por "WhatsApp Business App" details={"phone":"5531900000003","waMessageId":"wamid.TESTE_ECHO_DUP","conversationId":3}
+
+total de conversas=3 mensagens=3 logs=3
+
+================ LOG DO SERVIDOR DURANTE OS DISPAROS ================
+Servidor rodando na porta 3111 em ambiente development
+[WHATSAPP_WEBHOOK_RECEIVED] { messages: 1, echoes: 0 }
+[WHATSAPP_WEBHOOK_RECEIVED] { messages: 0, echoes: 1 }
+[WHATSAPP_ACCOUNT_UPDATE] { event: 'PARTNER_REMOVED' }
+[WHATSAPP_HISTORY_DISCARDED] { threads: 2, messages: 3 }
+[WHATSAPP_WEBHOOK_RECEIVED] { messages: 0, echoes: 0 }
+[WHATSAPP_APP_STATE_SYNC_DISCARDED] { entries: 2 }
+[WHATSAPP_WEBHOOK_RECEIVED] { messages: 0, echoes: 0 }
+[WHATSAPP_WEBHOOK_UNKNOWN_FIELD] { field: 'message_template_status_update' }
+[WHATSAPP_WEBHOOK_RECEIVED] { messages: 0, echoes: 0 }
+[WHATSAPP_WEBHOOK_RECEIVED] { messages: 0, echoes: 1 }
+[WHATSAPP_DISCONNECTED] { event: 'PARTNER_REMOVED' }
+[WHATSAPP_WEBHOOK_RECEIVED] { messages: 0, echoes: 0 }
+[WHATSAPP_HUMAN_TAKEOVER] { conversationId: 1, phone: '5531900000002' }
+[WHATSAPP_HUMAN_TAKEOVER] { conversationId: 3, phone: '5531900000003' }
+[WHATSAPP_BOT_FAILURE] {
+  phone: '5531900000001',
+  error: Error: OPENAI_API_KEY não configurado neste ambiente -- bot do WhatsApp indisponível.
+      at callOpenAI (/home/user/Rede-Bob-s/backend/src/modules/whatsapp/openaiClient.ts:33:11)
+      at receive (/home/user/Rede-Bob-s/backend/src/modules/whatsapp/whatsapp.controller.ts:129:34)
+}
+[WHATSAPP_BOT_FAILURE_DOUBLE] {
+  phone: '5531900000001',
+  sendErr: Error: Nenhuma conta WhatsApp conectada e META_ACCESS_TOKEN/META_PHONE_NUMBER_ID não configurados -- impossível enviar mensagem.
+      at resolveSendCredentials (/home/user/Rede-Bob-s/backend/src/modules/whatsapp/sendMessage.ts:47:11)
+      at async sendWhatsappText (/home/user/Rede-Bob-s/backend/src/modules/whatsapp/sendMessage.ts:61:42)
+      at async receive (/home/user/Rede-Bob-s/backend/src/modules/whatsapp/whatsapp.controller.ts:208:9)
+}
+[WHATSAPP_WEBHOOK_RECEIVED] { messages: 0, echoes: 1 }
+[WHATSAPP_ECHO_IGNORED_KNOWN_MESSAGE] { waMessageId: 'wamid.TESTE_ECHO_DUP' }
+
+================ LEITURA DO RESULTADO ================
+1. messages           -> [WHATSAPP_WEBHOOK_RECEIVED] {messages:1} + WhatsappMessage IN gravada.
+                         As duas exceções que aparecem no fim do log são do ambiente de teste,
+                         não do roteamento: sem OPENAI_API_KEY e sem token de envio, o loop de
+                         resposta cai nos catches que a Fase 14 já tinha. Nada escapou.
+2. smb_message_echoes -> botPaused=true, humanRepliedAt preenchido, mensagem OUT gravada,
+                         Log WHATSAPP_HUMAN_TAKEOVER. lastInboundAt do cliente B continua null:
+                         eco é o negócio falando, não o cliente (TTL de sessão da 14.5 intacto).
+3. account_update     -> [WHATSAPP_ACCOUNT_UPDATE] + Log WHATSAPP_DISCONNECTED com o
+                         disconnection_info inteiro. Nenhuma tentativa de reconexão automática.
+4. history            -> [WHATSAPP_HISTORY_DISCARDED] {threads:2, messages:3}. Contou e descartou:
+                         nada de history foi gravado (só 3 mensagens no banco, todas dos casos 1/2/8).
+5. smb_app_state_sync -> [WHATSAPP_APP_STATE_SYNC_DISCARDED] {entries:2}. Nenhum contato gravado.
+6. field desconhecido -> [WHATSAPP_WEBHOOK_UNKNOWN_FIELD], 200, sem exceção -- que é o ponto:
+                         campo novo do Meta não pode virar 500 nem fila de reentrega.
+7. assinatura ruim    -> 401 antes de qualquer processamento. A Fase 13 continua de pé.
+8. eco reentregue     -> [WHATSAPP_ECHO_IGNORED_KNOWN_MESSAGE]: o segundo disparo do mesmo
+                         waMessageId não gerou segunda mensagem nem segundo Log (3 mensagens,
+                         3 logs no total). É a mesma guarda que impede o bot de se pausar
+                         sozinho ao receber o eco da resposta que ele próprio mandou.

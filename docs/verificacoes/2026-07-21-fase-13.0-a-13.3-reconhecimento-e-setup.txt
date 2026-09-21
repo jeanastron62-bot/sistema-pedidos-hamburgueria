@@ -1,0 +1,306 @@
+### FASE 13.0 -- Reconhecimento (comandos read-only, nenhum arquivo alterado nesta etapa) ###
+
+--- cat src/server.ts (antes das mudanças da 13.2 -- ver git log/diff pra comparar) ---
+(rodado agora, já com as mudanças da fase aplicadas -- ver secao 13.2 abaixo pro antes/depois)
+
+--- cat src/config/env.ts ---
+import 'dotenv/config';
+import { z } from 'zod';
+
+const envSchema = z.object({
+  DATABASE_URL: z.string().url(),
+  JWT_SECRET: z.string().min(10),
+  JWT_EXPIRES_IN: z.string().default('10h'),
+  PORT: z.string().default('3000'),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  TZ: z.string().default('America/Sao_Paulo'),
+  META_APP_SECRET: z.string().min(10),
+  META_VERIFY_TOKEN: z.string().min(6)
+});
+
+const _env = envSchema.safeParse(process.env);
+
+if (!_env.success) {
+  console.error('❌ Configuração de ambiente inválida:', _env.error.format());
+  process.exit(1);
+}
+
+export const env = _env.data;
+
+process.env.TZ = env.TZ;
+
+--- find src/modules -maxdepth 1 -type d ---
+src/modules
+src/modules/auth
+src/modules/config
+src/modules/logs
+src/modules/menu
+src/modules/neighborhoods
+src/modules/orders
+src/modules/public
+src/modules/reports
+src/modules/users
+src/modules/whatsapp
+
+--- cat .env.example ---
+DATABASE_URL="postgresql://postgres:[senha]@[host]:[porta]/railway"
+JWT_SECRET="gerar com: openssl rand -base64 64"
+JWT_EXPIRES_IN="10h"
+PORT=3000
+NODE_ENV=production
+TZ="America/Sao_Paulo"
+META_APP_SECRET="do painel do App no Meta for Developers, aba Configurações Básicas"
+META_VERIFY_TOKEN="qualquer string sua — é o que você digita no painel do Meta ao configurar o webhook"
+
+--- cat src/utils/logger.ts ---
+import { PrismaClient, Prisma } from '@prisma/client';
+
+type LogData = {
+  userId?: number | null;
+  username: string;
+  action: string;
+  details?: any;
+};
+
+export async function createLog(tx: Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">, data: LogData) {
+  await tx.log.create({
+    data: {
+      userId: data.userId,
+      username: data.username,
+      action: data.action,
+      details: data.details ? (data.details as Prisma.InputJsonValue) : Prisma.JsonNull
+    }
+  });
+}
+
+--- busca por 'whatsapp' no repo inteiro (fora node_modules/.git) ---
+/c/Users/Jean/documents/sistema-pedidos-rede/.claude/worktrees/fase-9-painel-adm-ti/frontend/src/utils/whatsapp.ts
+/c/Users/Jean/documents/sistema-pedidos-rede/backend/prisma/migrations/20260721221933_fase13_whatsapp_webhook
+/c/Users/Jean/documents/sistema-pedidos-rede/backend/src/modules/whatsapp
+/c/Users/Jean/documents/sistema-pedidos-rede/backend/src/modules/whatsapp/whatsapp.controller.ts
+/c/Users/Jean/documents/sistema-pedidos-rede/backend/src/modules/whatsapp/whatsapp.routes.ts
+/c/Users/Jean/documents/sistema-pedidos-rede/backend/src/modules/whatsapp/whatsapp.service.ts
+/c/Users/Jean/documents/sistema-pedidos-rede/docs/FASE-13-webhook-whatsapp-CLAUDE-CODE.md
+/c/Users/Jean/documents/sistema-pedidos-rede/docs/verificacoes/2026-07-21-fase-13-whatsapp-webhook.txt
+/c/Users/Jean/documents/sistema-pedidos-rede/frontend/src/utils/whatsapp.ts
+
+### FASE 13.1 -- Variaveis de ambiente ###
+
+--- git diff backend/src/config/env.ts ---
+diff --git a/backend/src/config/env.ts b/backend/src/config/env.ts
+index 0a7eb14..bb04e67 100644
+--- a/backend/src/config/env.ts
++++ b/backend/src/config/env.ts
+@@ -7,7 +7,9 @@ const envSchema = z.object({
+   JWT_EXPIRES_IN: z.string().default('10h'),
+   PORT: z.string().default('3000'),
+   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+-  TZ: z.string().default('America/Sao_Paulo')
++  TZ: z.string().default('America/Sao_Paulo'),
++  META_APP_SECRET: z.string().min(10),
++  META_VERIFY_TOKEN: z.string().min(6)
+ });
+ 
+ const _env = envSchema.safeParse(process.env);
+
+--- git diff backend/.env.example ---
+warning: in the working copy of 'backend/.env.example', LF will be replaced by CRLF the next time Git touches it
+diff --git a/backend/.env.example b/backend/.env.example
+index f84fb7b..5cc0b8e 100644
+--- a/backend/.env.example
++++ b/backend/.env.example
+@@ -4,3 +4,5 @@ JWT_EXPIRES_IN="10h"
+ PORT=3000
+ NODE_ENV=production
+ TZ="America/Sao_Paulo"
++META_APP_SECRET="do painel do App no Meta for Developers, aba Configurações Básicas"
++META_VERIFY_TOKEN="qualquer string sua — é o que você digita no painel do Meta ao configurar o webhook"
+
+--- .env SEM META_APP_SECRET/META_VERIFY_TOKEN, tentando subir (deve falhar) ---
+❌ Configuração de ambiente inválida: {
+  _errors: [],
+  META_APP_SECRET: { _errors: [ 'Required' ] },
+  META_VERIFY_TOKEN: { _errors: [ 'Required' ] }
+}
+EXIT_CODE=1
+
+--- .env restaurado com os valores de teste, subindo de novo (deve funcionar) ---
+node:events:487
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::3000
+    at Server.setupListenHandle [as _listen2] (node:net:2008:16)
+    at listenInCluster (node:net:2065:12)
+    at Server.listen (node:net:2170:7)
+    at path (<repo>\backend\src\server.ts:71:12)
+    at Object.<anonymous> (<repo>\backend\src\server.ts:73:2)
+    at Module._compile (node:internal/modules/cjs/loader:1830:14)
+    at Object.transformer (<repo>\backend\node_modules\tsx\dist\register-BLUABhh3.cjs:9:3252)
+    at Module.load (node:internal/modules/cjs/loader:1553:32)
+    at Module._load (node:internal/modules/cjs/loader:1355:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2044:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 3000
+}
+
+Node.js v24.15.0
+EXIT_CODE=1
+
+--- NOTA: a tentativa anterior bateu num processo fantasma na porta 3000 (EADDRINUSE)
+de uma sessao de dev server anterior que nao tinha morrido de verdade -- matei o PID
+(netstat -ano | findstr :3000 -> taskkill /PID <n> /F) e repeti o teste, como o
+CONTEXTO.md manda fazer antes de aceitar qualquer outra hipotese. ---
+
+--- .env restaurado com os valores de teste, subindo de novo (porta livre agora) ---
+Servidor rodando na porta 3000 em ambiente development
+EXIT_CODE=124
+
+### FASE 13.2 -- Corpo bruto preservado no express.json() ###
+
+--- git diff backend/src/server.ts ---
+warning: in the working copy of 'backend/src/server.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/backend/src/server.ts b/backend/src/server.ts
+index d1b38e6..fc45837 100644
+--- a/backend/src/server.ts
++++ b/backend/src/server.ts
+@@ -14,6 +14,19 @@ import publicRoutes from './modules/public/public.routes';
+ import usersRoutes from './modules/users/users.routes';
+ import logsRoutes from './modules/logs/logs.routes';
+ import reportsRoutes from './modules/reports/reports.routes';
++import whatsappRoutes from './modules/whatsapp/whatsapp.routes';
++
++// Corpo bruto (bytes exatos, antes do parse) -- a verificação de assinatura
++// do webhook do WhatsApp (Fase 13) precisa dele; não dá pra reconstruir a
++// partir do req.body já parseado. Capturado no mesmo parse do express.json()
++// porque o stream da requisição só pode ser lido uma vez.
++declare global {
++  namespace Express {
++    interface Request {
++      rawBody?: Buffer;
++    }
++  }
++}
+ 
+ const app = express();
+ const httpServer = createServer(app);
+@@ -24,7 +37,11 @@ initSocket(httpServer);
+ // Trust proxy for rate limiting (Cloud Run)
+ app.set('trust proxy', 1);
+ 
+-app.use(express.json());
++app.use(express.json({
++  verify: (req, _res, buf) => {
++    (req as express.Request).rawBody = buf;
++  }
++}));
+ 
+ // API Routes
+ app.use('/api/auth', authRoutes);
+@@ -36,6 +53,7 @@ app.use('/api/public', publicRoutes);
+ app.use('/api/users', usersRoutes);
+ app.use('/api/logs', logsRoutes);
+ app.use('/api/reports', reportsRoutes);
++app.use('/api/webhook/whatsapp', whatsappRoutes);
+ 
+ // Serve static frontend
+ const frontendPath = path.join(__dirname, '../../frontend/dist');
+
+--- npm run build ---
+
+> sistema-pedidos-backend@1.0.0 build
+> tsc
+
+BUILD_EXIT=0
+
+--- GET /api/menu (rota existente, pre-Fase-13) continua respondendo normal (401 sem token, esperado) ---
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100     32 100     32   0      0   3385      0                              0100     32 100     32   0      0   3227      0                              0100     32 100     32   0      0   3075      0                              0
+HTTP/1.1 401 Unauthorized
+X-Powered-By: Express
+Content-Type: application/json; charset=utf-8
+Content-Length: 32
+ETag: W/"20-wnicsCa7pyXG08BLBUGm/E8IsRE"
+Date: Tue, 21 Jul 2026 22:37:45 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"Token não fornecido"}
+--- POST /api/auth/login (rota existente) continua parseando req.body normal (401 credencial invalida, esperado -- confirma que o body chegou parseado, senao daria erro diferente) ---
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100     31   0      0 100     31      0     25   00:01   00:01             25100     71 100     40 100     31     18     14   00:02   00:02             25100     71 100     40 100     31     18     14   00:02   00:02             25100     71 100     40 100     31     18     14   00:02   00:02             25
+HTTP/1.1 401 Unauthorized
+X-Powered-By: Express
+RateLimit-Policy: 10;w=900
+RateLimit-Limit: 10
+RateLimit-Remaining: 9
+RateLimit-Reset: 900
+Content-Type: application/json; charset=utf-8
+Content-Length: 40
+ETag: W/"28-EtXjsE/ItprLEwIOUIO+EwkCEP4"
+Date: Tue, 21 Jul 2026 22:37:47 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"Usuário ou senha incorretos"}
+### FASE 13.3 -- Schema (WhatsappConversation, WhatsappMessage, MessageDirection) ###
+
+--- npx prisma migrate status ---
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "railway", schema "public" at "hayabusa.proxy.rlwy.net:22873"
+
+5 migrations found in prisma/migrations
+
+Database schema is up to date!
+
+--- conteudo de prisma/migrations/20260721221933_fase13_whatsapp_webhook/migration.sql ---
+-- CreateEnum
+CREATE TYPE "MessageDirection" AS ENUM ('IN', 'OUT');
+
+-- CreateTable
+CREATE TABLE "whatsapp_conversations" (
+    "id" SERIAL NOT NULL,
+    "phone" TEXT NOT NULL,
+    "bot_paused" BOOLEAN NOT NULL DEFAULT false,
+    "last_inbound_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "whatsapp_conversations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "whatsapp_messages" (
+    "id" SERIAL NOT NULL,
+    "conversation_id" INTEGER NOT NULL,
+    "wa_message_id" TEXT,
+    "direction" "MessageDirection" NOT NULL,
+    "raw_payload" JSONB NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "whatsapp_messages_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "whatsapp_conversations_phone_key" ON "whatsapp_conversations"("phone");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "whatsapp_messages_wa_message_id_key" ON "whatsapp_messages"("wa_message_id");
+
+-- CreateIndex
+CREATE INDEX "whatsapp_messages_conversation_id_created_at_idx" ON "whatsapp_messages"("conversation_id", "created_at");
+
+-- AddForeignKey
+ALTER TABLE "whatsapp_messages" ADD CONSTRAINT "whatsapp_messages_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "whatsapp_conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;

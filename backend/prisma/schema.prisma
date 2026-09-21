@@ -1,0 +1,369 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+}
+
+enum Role {
+  GARCOM
+  CHAPISTA
+  ENTREGADOR
+  ADM
+  TI
+}
+
+enum Category {
+  HOT_DOGS
+  HAMBURGUERES
+  MACARRAO_NA_CHAPA
+  BEBIDAS
+  ACRESCIMOS
+}
+
+enum OrderType {
+  MESA
+  RETIRADA
+  DELIVERY
+}
+
+enum OrderStatus {
+  AGUARDANDO
+  PREPARANDO
+  PRONTO
+  EM_ROTA
+  ENTREGUE
+  CANCELADO
+}
+
+enum PaymentMethod {
+  DINHEIRO
+  PIX
+  CREDITO
+  DEBITO
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  role      Role     @default(GARCOM)
+  approved  Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  createdOrders  Order[] @relation("CreatedBy")
+  assignedOrders Order[] @relation("AssignedTo")
+  logs           Log[]
+
+  @@map("users")
+}
+
+model MenuItem {
+  id             Int      @id @default(autoincrement())
+  name           String   @unique
+  category       Category
+  price          Decimal  @db.Decimal(10, 2)
+  description    String?
+  available      Boolean  @default(true)
+  archived       Boolean  @default(false)
+  ingredients    Json     @default("[]")
+  requiredChoice Json?    @map("required_choice")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  orderItems  OrderItem[]
+  orderExtras OrderItemExtra[]
+
+  @@map("menu_items")
+}
+
+model Neighborhood {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  deliveryFee Decimal  @db.Decimal(10, 2) @map("delivery_fee")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  orders Order[]
+
+  @@map("neighborhoods")
+}
+
+model Order {
+  id     Int         @id @default(autoincrement())
+  type   OrderType
+  status OrderStatus @default(AGUARDANDO)
+
+  tableNumber Int? @map("table_number")
+
+  subtotal      Decimal       @db.Decimal(10, 2)
+  total         Decimal       @db.Decimal(10, 2)
+  paymentMethod PaymentMethod @map("payment_method")
+
+  cashPaidAmount Decimal? @db.Decimal(10, 2) @map("cash_paid_amount")
+
+  customerName    String? @map("customer_name")
+  customerPhone   String? @map("customer_phone")
+  customerAddress String? @map("customer_address")
+
+  neighborhoodId           Int?     @map("neighborhood_id")
+  neighborhoodNameSnapshot String?  @map("neighborhood_name_snapshot")
+  deliveryFeeSnapshot      Decimal? @db.Decimal(10, 2) @map("delivery_fee_snapshot")
+
+  createdById   Int?    @map("created_by_id")
+  createdByName String? @map("created_by_name")
+
+  assignedToId   Int?    @map("assigned_to_id")
+  assignedToName String? @map("assigned_to_name")
+
+  clientOnline              Boolean @default(false) @map("client_online")
+  requiresStaffConfirmation Boolean @default(false) @map("requires_staff_confirmation")
+
+  problems String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  neighborhood  Neighborhood?        @relation(fields: [neighborhoodId], references: [id], onDelete: SetNull)
+  createdBy     User?                @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  assignedTo    User?                @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  items         OrderItem[]
+  statusHistory OrderStatusHistory[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([assignedToId])
+  @@index([neighborhoodId])
+  @@index([createdById])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             Int     @id @default(autoincrement())
+  orderId        Int     @map("order_id")
+  menuItemId     Int     @map("menu_item_id")
+  menuItemName   String  @map("menu_item_name")
+  unitPrice      Decimal @db.Decimal(10, 2) @map("unit_price")
+  quantity       Int
+  observations   String?
+  selectedChoice String? @map("selected_choice")
+
+  order    Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem         @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  extras   OrderItemExtra[]
+
+  @@index([orderId])
+  @@index([menuItemId])
+  @@map("order_items")
+}
+
+model OrderItemExtra {
+  id           Int     @id @default(autoincrement())
+  orderItemId  Int     @map("order_item_id")
+  menuItemId   Int     @map("menu_item_id")
+  menuItemName String  @map("menu_item_name")
+  unitPrice    Decimal @db.Decimal(10, 2) @map("unit_price")
+  quantity     Int     @default(1)
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  menuItem  MenuItem  @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+
+  @@index([orderItemId])
+  @@index([menuItemId])
+  @@map("order_item_extras")
+}
+
+model OrderStatusHistory {
+  id        Int         @id @default(autoincrement())
+  orderId   Int         @map("order_id")
+  oldStatus OrderStatus @map("old_status")
+  newStatus OrderStatus @map("new_status")
+  changedBy String      @map("changed_by")
+  notes     String?
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_status_history")
+}
+
+model Log {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  username  String
+  action    String
+  details   Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([action])
+  @@index([createdAt])
+  @@map("logs")
+}
+
+model SystemConfig {
+  id               Int      @id @default(1)
+  trailerOpen      Boolean  @default(true)  @map("trailer_open")
+  deliveryActive   Boolean  @default(true)  @map("delivery_active")
+  deliveryExtendedUntil DateTime? @map("delivery_extended_until")
+  maxTables        Int      @default(10)    @map("max_tables")
+  contactPhone     String   @map("contact_phone")
+  contactInstagram String   @map("contact_instagram")
+
+  // Fase 11 -- fechamento agendado do trailer (sem scheduler, computado na hora
+  // da requisição via backend/src/utils/trailerSchedule.ts).
+  scheduledCloseAt    DateTime? @map("scheduled_close_at")
+  dailyNotice         String?   @map("daily_notice")
+  dailyNoticeUpdatedAt DateTime? @map("daily_notice_updated_at")
+  defaultCloseHour    Int       @default(2) @map("default_close_hour")
+  closeCeilingHour    Int       @default(6) @map("close_ceiling_hour")
+  closedWeekday       Int?      @default(1) @map("closed_weekday")
+
+  updatedBy        String   @map("updated_by")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("system_config")
+}
+
+// Fase 13 -- webhook do WhatsApp: infraestrutura e persistência só. Sem campo
+// de conteúdo/texto extraído, sem toolCall, sem contagem de tokens -- schema
+// mínimo pra provar que a mensagem chega e fica salva. A Fase 14 adiciona o
+// que for necessário quando o loop de LLM existir.
+enum MessageDirection {
+  IN
+  OUT
+}
+
+// Fase 17.2 (correção) -- ver comentário em WhatsappMessage.deliveryStatus sobre o
+// significado de nulo (não é um destes três valores).
+enum MessageDeliveryStatus {
+  PENDENTE
+  ENVIADA
+  FALHOU
+}
+
+model WhatsappConversation {
+  id            Int       @id @default(autoincrement())
+  phone         String    @unique
+  botPaused     Boolean   @default(false) @map("bot_paused")
+  lastInboundAt DateTime? @map("last_inbound_at")
+  // Fase 15.1 -- quando um humano respondeu por último pelo app WhatsApp
+  // Business (Coexistence). Usado pra despausar o bot por inatividade: sem
+  // isso, toda conversa pausada por atendimento humano fica presa pra
+  // sempre (mesma lacuna que transferir_para_humano já tinha na Fase 14).
+  humanRepliedAt DateTime? @map("human_replied_at")
+  // Contexto do handoff via transferir_para_humano (tool call do bot) --
+  // preenchido junto com botPaused, limpo no /resume. Sem isso o painel não
+  // tem como mostrar pro atendente por que a conversa está parada sem abrir
+  // o histórico inteiro.
+  handoffMotivo String? @map("handoff_motivo")
+  handoffResumo String? @map("handoff_resumo")
+  // Fase 17 -- INSTANTE do handoff. Não use updatedAt no lugar: ele muda a
+  // cada escrita na linha, e deliveryGraceUntil é escrito a cada mensagem
+  // recebida entre 18h e 23h59, então "pausada há X min" calculado por
+  // updatedAt já mentia antes desta fase. Gravado nos DOIS caminhos que
+  // pausam por handoff (dispatchToolCall e pauseForHumanReview) e limpo nos
+  // DOIS caminhos que despausam (resume manual e despausa automática) --
+  // se só um dos lados mexer, a fila e o cronômetro quebram na metade dos
+  // casos.
+  handoffAt DateTime? @map("handoff_at")
+  // Fase 17 -- base do contador de não-lidas (mensagens IN com createdAt >
+  // lastReadAt). É POR CONVERSA, não por usuário: se o garçom abre, conta
+  // como lida pra todo mundo. Decisão consciente -- num trailer de ~10
+  // pessoas um índice por usuário é complexidade sem retorno. Não "corrija"
+  // isso achando que é bug. Não-lida é só selo visual; a PRIORIDADE da fila
+  // não usa este campo (ver getInboxConversations), justamente pra abrir uma
+  // conversa sem responder não derrubá-la da fila.
+  lastReadAt DateTime? @map("last_read_at")
+  // Tolerância de delivery: instante até quando esta conversa ainda pode
+  // fechar delivery depois do corte da meia-noite. Escrito só quando chega
+  // mensagem entre 18:00 e 23:59 (valor = o 00:10 seguinte); mensagem fora
+  // dessa faixa não sobrescreve, então o valor sobrevive da última mensagem
+  // antes da meia-noite e expira sozinho por ficar no passado.
+  deliveryGraceUntil DateTime? @map("delivery_grace_until")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  messages WhatsappMessage[]
+
+  @@map("whatsapp_conversations")
+}
+
+// Fase 15.1 -- a conexão WhatsApp vira dado, não variável de ambiente. Como
+// Tech Provider, cada cliente empresarial tem sua própria WABA; mesmo com um
+// cliente só hoje, o modelo já reflete isso (ver CONTEXTO.md, dívida técnica,
+// pra decisão sobre accessToken cifrado em repouso).
+model WhatsappBusinessAccount {
+  id                 Int      @id @default(autoincrement())
+  wabaId             String   @unique @map("waba_id")
+  phoneNumberId      String   @unique @map("phone_number_id")
+  displayPhoneNumber String?  @map("display_phone_number")
+  verifiedName       String?  @map("verified_name")
+  // Cifrado em repouso (AES-256-GCM, backend/src/utils/tokenCrypto.ts) --
+  // decisão explícita do cliente em 2026-08-06, não texto plano. Formato
+  // armazenado: "iv:authTag:ciphertext", tudo base64. Nunca logar este
+  // campo nem retorná-lo em resposta de API.
+  accessToken     String   @map("access_token")
+  // isCoexistence é o que o FLUXO alegou (nome do evento de sessão devolvido
+  // pelo Embedded Signup). isOnBizApp/platformType são o que a API CONFIRMOU,
+  // consultados no phone_number_id logo depois da troca do código. Os dois
+  // coexistem de propósito: divergência entre eles ("o popup disse
+  // coexistência, a Meta diz is_on_biz_app=false") é justamente o sinal de que
+  // a conexão não ficou de pé, e some se guardarmos só um dos lados.
+  // Nullable: conexão feita antes desta checagem existir não tem o dado, e
+  // false ("a Meta disse que não") não é a mesma coisa que null ("ninguém
+  // perguntou").
+  isCoexistence   Boolean  @default(false) @map("is_coexistence")
+  isOnBizApp      Boolean? @map("is_on_biz_app")
+  platformType    String?  @map("platform_type")
+  active          Boolean  @default(true)
+  connectedByName String   @map("connected_by_name")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("whatsapp_business_accounts")
+}
+
+model WhatsappMessage {
+  id             Int              @id @default(autoincrement())
+  conversationId Int              @map("conversation_id")
+  // waMessageId único é o que impede duplicata: o Meta reenvia webhook que não
+  // recebeu 200 a tempo (com backoff, por até 36h) -- a segunda tentativa
+  // falha na constraint, tratada como sucesso silencioso (já processada).
+  waMessageId    String?          @unique @map("wa_message_id")
+  direction      MessageDirection
+  rawPayload     Json             @map("raw_payload")
+  // Fase 14 -- texto legível (extraído da mensagem IN, ou gerado pelo bot na
+  // OUT). Alimenta o histórico mandado pra OpenAI; rawPayload continua com o
+  // payload bruto, sem duplicar a mesma informação nos dois formatos.
+  content        String?          @map("content")
+  // Fase 17 -- quem da equipe enviou, quando a mensagem saiu pelo painel.
+  // Snapshot de username, mesmo padrão de Order.createdByName: sobrevive à
+  // exclusão do usuário. null = não saiu do painel (mensagem do cliente, ou
+  // resposta do próprio bot).
+  sentByName     String?          @map("sent_by_name")
+  // Fase 17.2 (correção) -- grava PENDENTE antes de chamar a Graph API, confirma como
+  // ENVIADA com o waMessageId, ou marca FALHOU sem apagar a linha. Existe só
+  // para OUT; mensagem IN nasce e morre no mesmo estado (ela já chegou).
+  // NULO NÃO É "desconhecido genérico": é dado por decisão explícita, sem
+  // backfill -- todo registro criado antes desta correção significa
+  // "anterior à Fase 17, estado desconhecido". Nunca tratar nulo como
+  // PENDENTE nem como ENVIADA; é um quarto valor de fato, só que fora do enum.
+  deliveryStatus MessageDeliveryStatus? @map("delivery_status")
+  // Preenchido só quando deliveryStatus = FALHOU. Guarda o corpo do erro da
+  // Graph API (ou da exceção de rede), pra equipe ver o motivo sem precisar
+  // de log de servidor.
+  failureReason  String?          @map("failure_reason")
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  conversation WhatsappConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("whatsapp_messages")
+}

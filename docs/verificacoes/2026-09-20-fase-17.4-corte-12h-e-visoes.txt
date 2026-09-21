@@ -1,0 +1,12 @@
+IDs: p1=66 p2=67 a1=68 a2=69 a3=70
+view=pending devolveu: [ 66 ]   total(meta)= 3 pending(meta)= 1
+  >>> ESPERADO: só [p1]
+view=all      devolveu: [ 66, 68, 69 ]   total(meta)= 3 pending(meta)= 1
+  >>> ESPERADO: [p1, a1, a2] -- p2 e a3 fora (fora das 12h), mesmo a3 tendo resposta recente da equipe
+
+p1 em pending? true  esperado: true
+p2 em pending? false  esperado: false (fora das 12h)
+p2 em all?     false  esperado: false (fora das 12h)
+a1 em pending? false  esperado: false (nao pendente)
+a1 em all?     true  esperado: true
+a3 em all?     false  esperado: false (lastInboundAt 13h, apesar de humanRepliedAt 1h)

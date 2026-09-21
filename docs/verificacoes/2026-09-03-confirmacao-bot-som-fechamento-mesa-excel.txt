@@ -1,0 +1,113 @@
+CONFIRMACAO DO BOT, AVISO SONORO, FECHAMENTO AUTOMATICO, MESA POR NOME, EXCEL
+Data: 2026-09-03
+
+--------------------------------------------------------------------------------
+1. BOT SEMPRE CONFIRMA ANTES DE LANCAR
+--------------------------------------------------------------------------------
+Antes: so instrucao de prompt ("so depois de confirmacao explicita") --
+probabilistica; o modelo mostrava o resumo e chamava criar_pedido na mesma
+mensagem.
+Agora, duas camadas:
+  a) Schema de criar_pedido ganhou o campo OBRIGATORIO cliente_confirmou_resumo
+     (boolean). O modelo e forcado a decidir explicitamente a cada chamada.
+     Alterado em sincronia: docs/...PROMPT.md secao 2 e backend tools.ts
+     (JSON comparado programaticamente: identicos).
+  b) handleCriarPedido (whatsapp.service.ts) RECUSA quando o campo nao e
+     exatamente true, antes de tocar em cardapio/banco, devolvendo instrucao
+     pro modelo mostrar o resumo e esperar a resposta.
+  c) Prompt (doc secao 3 + template, identicos): limite nao negociavel novo,
+     passo 7 encerra a mensagem no resumo, passo 8 define o que conta e o que
+     nao conta como confirmacao.
+
+PROVA (backend, npx tsx, sem rede, sem banco -- dispatchToolCall real):
+--- cliente_confirmou_resumo=false ---
+  sucesso : false
+  erro    : O cliente ainda não confirmou o resumo do pedido.
+  >>> ESPERADO: sucesso=false sem tocar no banco. RESULTADO: RECUSADO NA TRAVA
+--- cliente_confirmou_resumo ausente ---
+  sucesso : false
+  erro    : O cliente ainda não confirmou o resumo do pedido.
+  >>> ESPERADO: sucesso=false sem tocar no banco. RESULTADO: RECUSADO NA TRAVA
+--- cliente_confirmou_resumo="true" (string) ---
+  sucesso : false
+  erro    : O cliente ainda não confirmou o resumo do pedido.
+  >>> ESPERADO: sucesso=false sem tocar no banco. RESULTADO: RECUSADO NA TRAVA
+--- cliente_confirmou_resumo=true ---
+  sucesso : false
+  >>> ESPERADO: passa da trava e cai na resolução (aqui falha por não haver banco). RESULTADO: PASSOU DA TRAVA
+
+--------------------------------------------------------------------------------
+2. AVISO SONORO DE PEDIDO NOVO (garcom + chapista)
+--------------------------------------------------------------------------------
+frontend/src/utils/alertSound.ts: beep sintetizado com Web Audio (3 toques
+ascendentes, ~0,6s) + vibracao no celular. Sem asset de audio.
+useSocketStore: em order:created, se o papel logado e GARCOM ou CHAPISTA e o
+pedido ainda nao estava na lista (reconexao reentrega), toca.
+PanelLayout: destrava o AudioContext no primeiro pointerdown/keydown --
+politica de autoplay dos navegadores: sem gesto previo, som nao toca. Antes
+do primeiro toque na tela o aviso e silencioso, sem erro.
+
+NAO PROVADO: audio de verdade em dispositivo. Precisa de teste manual: abrir
+o painel, tocar em qualquer lugar uma vez, lancar um pedido em outro painel.
+
+--------------------------------------------------------------------------------
+3. "TRAILER ABERTO" CONTINUAVA LIGADO DEPOIS DO FECHAMENTO
+--------------------------------------------------------------------------------
+Causa: a Fase 11 decidiu "sem cron" -- isEffectivelyOpen() passa a responder
+false quando scheduledCloseAt vence, mas o campo trailerOpen fica true no
+banco e o checkbox do painel mostra "aberto".
+Correcao: backend/src/modules/config/trailerAutoClose.ts -- setInterval de
+30s (processo unico, CONTEXTO 2.3) faz updateMany condicional
+(trailerOpen=true AND scheduledCloseAt <= agora) -> trailerOpen=false, com
+log CONFIG_TRAILER_AUTO_CLOSED e broadcast system:config_changed identicos ao
+fechamento manual. Compare-and-set: abrir/adiar no mesmo instante nao e
+sobrescrito. Roda tambem na subida do servidor.
+DESVIO CONSCIENTE do "sem cron" da Fase 11, a pedido: a decisao de "esta
+aberto?" continua 100% em isEffectivelyOpen(); o ticker so reconcilia o campo.
+SettingsPanel passou a sincronizar o checkbox com system:config_changed
+(antes mostrava o valor de quando a aba foi aberta).
+
+NAO PROVADO por execucao: exige banco. Logica e a mesma de acceptDelivery
+(updateMany condicional), compilada com tsc.
+
+--------------------------------------------------------------------------------
+4. PEDIDO DE MESA COM NOME DO CLIENTE
+--------------------------------------------------------------------------------
+Regra (backend orders.service.ts, espelhada no OrderWizard): numero da mesa OU
+nome do cliente, pelo menos um. Se veio numero, continua validado contra
+maxTables. Cardapio publico (clientOnline) segue exigindo numero -- pedido
+anonimo de mesa sem mesa nao tem como ser localizado.
+Rotulo (orderLabel.ts): "Mesa 3", "Mesa 3 · Joao" ou "Mesa: Joao".
+
+--------------------------------------------------------------------------------
+5. EXPORTAR RELATORIO EM EXCEL
+--------------------------------------------------------------------------------
+Botao "Exportar Excel" ao lado do PDF (ADM e TI), mesmo modal Resumo/Completo.
+Gerador proprio de .xlsx (xlsxWriter.ts, OOXML minimo + fflate pra zipar) --
+o pacote xlsx do npm esta abandonado com CVEs abertas, ExcelJS pesa ~1 MB.
+Abas: Resumo (mesmos KPIs da tela/PDF), Serie temporal, Top 10 itens; no modo
+Completo: Resumo, Pedidos (uma linha por pedido) e Itens (uma linha por item,
+pra tabela dinamica). Dinheiro vai como numero com formato R$, nao texto.
+Dependencia nova: fflate 0.8.2 (import dinamico, fora do bundle publico).
+
+PROVA (npx tsx gera o arquivo; python zipfile + ElementTree validam):
+zip integro: True | partes: ['[Content_Types].xml', '_rels/.rels', 'xl/_rels/workbook.xml.rels', 'xl/styles.xml', 'xl/workbook.xml', 'xl/worksheets/sheet1.xml', 'xl/worksheets/sheet2.xml']
+abas: ['Resumo', 'Pedidos Itens  x   teste de nom']
+numFmt 164: "R$ "#,##0.00
+  sheet1 row1: A1='Métrica'(s1) B1='Valor'(s1)
+  sheet1 row2: A2='Faturamento bruto'(s0) B2='1234.5'(s2)
+  sheet1 row3: A3='Pedidos entregues'(s0) B3='7'(s0)
+  sheet2 row1: A1='Nº'(s1) B1='Item & obs <tag>'(s1) C1='Total'(s1)
+  sheet2 row2: A2='12'(s0) B2='X-Tudo "sem cebola"\ncom bacon'(s0) C2='24'(s2)
+  sheet2 row3: A3='13'(s0) B3='Ctrlchar'(s0) C3='9.9'(s2)
+legenda: s0=padrao, s1=negrito (cabecalho), s2=moeda R$
+
+NAO PROVADO: abrir no Excel/LibreOffice de verdade (nao ha aqui). A estrutura
+segue o formato padrao (inlineStr, styles com numFmt customizado).
+
+--------------------------------------------------------------------------------
+6. BUILD
+--------------------------------------------------------------------------------
+backend  npm run build (tsc)  -> exit 0
+frontend tsc -b               -> exit 0
+frontend oxlint               -> exit 0

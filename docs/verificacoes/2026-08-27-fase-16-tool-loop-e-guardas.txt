@@ -1,0 +1,76 @@
+FASE 16 -- LOOP DE TOOL CALLING E GUARDAS DE SAIDA -- PROVA
+Data: 2026-08-27
+Script: backend/verify-tmp.ts (descartavel, apagado depois desta execucao).
+
+POR QUE SEM REDE: o callModel e injetado, entao o cenario exato do T25 e
+reproduzido de forma determinista. Contra a OpenAI de verdade isso seria
+impossivel -- a resposta dela varia, e o bug so aparece quando ela devolve
+tool_call em vez de texto na SEGUNDA rodada.
+
+================ SAIDA ================
+=== 1. T25 REPRODUZIDO: 2a resposta vem com tool_call e content null ===
+(comportamento ANTIGO: replyText ficaria "" e o cliente receberia
+ "Tive um problema tecnico agora, ja te retorno")
+
+--- T25 -- recusa e o modelo tenta outra funcao ---
+  replyText   : "Seu pedido 71 já entrou em preparo, então não consigo cancelar por aqui. Fala com o trailer no (31) 99999-9999 👍"
+  calledTools : [cancelar_pedido_ativo, consultar_pedido_ativo]
+  exhausted   : false
+  rodadas do modelo consumidas: 3
+  >>> ESPERADO: texto de verdade, nao vazio. RESULTADO: TEXTO REAL
+
+=== 2. Modelo insiste em chamar funcao pra sempre -> teto de rodadas ===
+
+--- teto de rodadas ---
+  replyText   : ""
+  calledTools : [consultar_pedido_ativo, consultar_pedido_ativo, consultar_pedido_ativo]
+  exhausted   : true
+  rodadas do modelo consumidas: 4
+  >>> ESPERADO: exhausted=true e no maximo 3 despachos.
+
+=== 3. Argumentos malformados NAO derrubam o turno ===
+
+--- JSON invalido nos arguments ---
+  replyText   : "Desculpa, me confundi aqui. Qual é o número do pedido?"
+  calledTools : [cancelar_pedido_ativo]
+  exhausted   : false
+  rodadas do modelo consumidas: 2
+  >>> ESPERADO: resposta de texto normal, sem excecao. RESULTADO: OK
+
+=== 4. Erro tecnico de verdade continua subindo ===
+  >>> ESPERADO: lancou. RESULTADO: lancou "boom -- falha de infraestrutura"
+
+=== 5. Guarda de JSON vazando (T11) ===
+  [OK  ] bloqueia=true  (esperado true ) <- "{\"motivo\":\"BAIRRO_FORA_DA_LISTA\",\"resumo\":\"Cliente informou "
+  [OK  ] bloqueia=true  (esperado true ) <- "[{\"item\":\"x\"}]"
+  [OK  ] bloqueia=true  (esperado true ) <- "```json\n{\"a\":1}\n```"
+  [OK  ] bloqueia=true  (esperado true ) <- "  {\"espaco\":\"antes\"}"
+  [OK  ] bloqueia=false (esperado false) <- "Opa! Temos sim, o X-Tudo sai por R$ 25,00 🍔"
+  [OK  ] bloqueia=false (esperado false) <- "Seu pedido nº 71 está em preparo."
+  [OK  ] bloqueia=false (esperado false) <- "Vou confirmar {isso} com a equipe"
+
+================ LEITURA DO RESULTADO ================
+1. T25 reproduzido. A 2a resposta do modelo vem com tool_call e content null
+   -- exatamente o que o codigo antigo nao tratava. ANTES: replyText = ''
+   e o cliente recebia 'Tive um problema tecnico agora, ja te retorno'.
+   AGORA: o loop segue pra 3a rodada e devolve texto real.
+2. Modelo que insiste em chamar funcao para no teto: 3 despachos, nem um a
+   mais, exhausted=true. O controller pausa e manda pra fila humana.
+3. Argumentos ilegiveis viram resultado de erro PRA O MODELO, nao excecao.
+   O dispatch nem e chamado (o fake lancaria se fosse). O modelo se
+   corrige na rodada seguinte e responde ao cliente.
+4. Erro tecnico de verdade (Error comum) continua subindo pro catch da
+   receive() -- a distincao entre falha de negocio e falha tecnica nao foi
+   perdida.
+5. Guarda de JSON: 7 casos, 4 que devem bloquear e 3 que NAO podem
+   bloquear. Nenhum falso positivo -- inclusive 'Vou confirmar {isso} com
+   a equipe', que tem chave no meio e passa, como deve.
+
+================ BUILD ================
+backend: npm run build (tsc) -> exit 0
+frontend: npx tsc -b + oxlint -> exit 0
+
+================ O QUE NAO FOI PROVADO AQUI ================
+Os testes fim a fim (T25, T29, T11 x3, T03, T04, T23) exigem WhatsApp real
+com o bot em producao. Nao foram executados nesta sessao e NAO estao
+relatados como se tivessem sido.

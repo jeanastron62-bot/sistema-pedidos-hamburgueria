@@ -1,0 +1,247 @@
+Merge simulado das tres branches, na ordem: fix-resolve-send-credentials ->
+fase17-mensagem-pendente -> fase17-prova-refeita. Um conflito real, so em
+docs/LOG-ERROS-AGENTE.md (as duas ultimas ancoram no mesmo ponto do arquivo).
+Resolvido mantendo os dois blocos, ordem cronologica (09-20 no topo, depois
+09-18), sem perda de conteudo. Nenhum outro arquivo conflitou.
+
+Bateria completa contra a arvore final (master + as tres branches):
+
+===================== 11 testes da 17.2 =====================
+===== 1) GET /conversations -- ordem da fila =====
+  cenario: A=49(handoff 1h) B=50(handoff 4h) C=51(handoff 40h) D=52(25h) E=53(JSON_LEAK 3h)
+HTTP/1.1 200 OK
+    id=50 pending=True unread=1 handoffAt=2026-09-20T16:22:23.645Z lastInbound=2026-09-20T17:22:23.645Z
+    id=53 pending=True unread=1 handoffAt=2026-09-20T17:22:23.653Z lastInbound=2026-09-20T17:22:23.653Z
+    id=49 pending=True unread=1 handoffAt=2026-09-20T19:22:23.639Z lastInbound=2026-09-20T19:22:23.639Z
+    id=52 pending=False unread=1 handoffAt=2026-09-19T19:22:23.650Z lastInbound=2026-09-19T19:22:23.650Z
+    id=51 pending=False unread=1 handoffAt=2026-09-19T04:22:23.648Z lastInbound=2026-09-19T04:22:23.648Z
+    -> total=5 pending=3 nextCursor=None
+  >>> ESPERADO: bucket por handoff_at asc = B, E, A; depois D, C por lastInbound desc.
+  >>> C tem o handoff MAIS ANTIGO (40h) e NAO pode estar no topo: teto de 12h.
+
+===== 2) limit=0 -- contador da aba, sem itens =====
+{
+    "items": [],
+    "total": 5,
+    "pending": 3,
+    "nextCursor": null
+}
+
+===== 3) GET /conversations como ENTREGADOR =====
+HTTP/1.1 403 Forbidden
+
+===== 4) POST resposta pelo painel na conversa 49 (dentro da janela) =====
+HTTP/1.1 201 Created
+{
+    "id": 66,
+    "direction": "OUT",
+    "content": "Confirmando: troco o lanche.",
+    "sentByName": "garcom1",
+    "createdAt": "2026-09-20T20:23:07.922Z",
+    "deliveryStatus": "ENVIADA",
+    "failureReason": null,
+    "waMessageId": "wamid.STUB2"
+}
+ id | bot_paused | human_replied | lida 
+----+------------+---------------+------
+ 49 | t          | t             | t
+(1 row)
+
+ id | direction | sent_by_name |                 conteudo                 
+----+-----------+--------------+------------------------------------------
+ 60 | IN        |              | meu pedido veio errado
+ 65 | OUT       | garcom1      | Oi! Vi seu pedido aqui, ja vou resolver.
+ 66 | OUT       | garcom1      | Confirmando: troco o lanche.
+(3 rows)
+
+ username |       action        |                     details                      
+----------+---------------------+--------------------------------------------------
+ garcom1  | WHATSAPP_REPLY_SENT | {"phone": "5531900000001", "conversationId": 49}
+ garcom1  | WHATSAPP_REPLY_SENT | {"phone": "5531900000001", "conversationId": 49}
+(2 rows)
+
+
+===== 5) POST na conversa 52 (cliente falou ha 25h) =====
+HTTP/1.1 409 Conflict
+{
+    "error": "Passou de 24h desde a \u00faltima mensagem do cliente. S\u00f3 ele pode reabrir a conversa -- n\u00e3o \u00e9 poss\u00edvel enviar por aqui agora.",
+    "windowExpiresAt": "2026-09-20T19:22:23.650Z"
+}
+
+===== 6) POST como ENTREGADOR =====
+HTTP/1.1 403 Forbidden
+
+===== 7) DESPAUSA AUTOMATICA (o teste do bug de ordem) -- conversa 50 =====
+ id | bot_paused | tem_handoff_at |     handoff_motivo      | human_replied_at 
+----+------------+----------------+-------------------------+------------------
+ 50 | t          | t              | CLIENTE_PEDIU_ATENDENTE | 
+(1 row)
+
+webhook 200
+ id | bot_paused | tem_handoff_at | handoff_motivo 
+----+------------+----------------+----------------
+ 50 | f          | f              | 
+(1 row)
+
+   username   |          action           |                               details                                
+--------------+---------------------------+----------------------------------------------------------------------
+ Bot WhatsApp | WHATSAPP_BOT_AUTO_RESUMED | {"phone": "5531900000002", "afterMinutes": 30, "conversationId": 50}
+(1 row)
+
+  >>> ESPERADO: bot_paused=f, handoff_at nulo, log presente.
+
+===== 10) PAUSA DE SEGURANCA (Fase 16) NAO despausa -- conversa 53, mesma idade =====
+ id | bot_paused | handoff_motivo 
+----+------------+----------------
+ 53 | t          | JSON_LEAK
+(1 row)
+
+webhook 200
+ id | bot_paused | handoff_motivo 
+----+------------+----------------
+ 53 | t          | JSON_LEAK
+(1 row)
+
+  >>> ESPERADO: continua bot_paused=t. E o controle do teste 7.
+
+===== 8) PRIORIDADE SOBREVIVE A LEITURA -- conversa 53 =====
+  fila ANTES de abrir:
+    id=53 pending=True unread=2 handoffAt=2026-09-20T17:22:23.653Z lastInbound=2026-09-20T20:23:11.436Z
+    id=50 pending=False unread=2 handoffAt=None lastInbound=2026-09-20T20:23:08.249Z
+    id=49 pending=False unread=0 handoffAt=2026-09-20T19:22:23.639Z lastInbound=2026-09-20T19:22:23.639Z
+    id=52 pending=False unread=1 handoffAt=2026-09-19T19:22:23.650Z lastInbound=2026-09-19T19:22:23.650Z
+    id=51 pending=False unread=1 handoffAt=2026-09-19T04:22:23.648Z lastInbound=2026-09-19T04:22:23.648Z
+    -> total=5 pending=1 nextCursor=None
+HTTP/1.1 200 OK
+  fila DEPOIS de abrir (sem responder):
+    id=53 pending=True unread=0 handoffAt=2026-09-20T17:22:23.653Z lastInbound=2026-09-20T20:23:11.436Z
+    id=50 pending=False unread=2 handoffAt=None lastInbound=2026-09-20T20:23:08.249Z
+    id=49 pending=False unread=0 handoffAt=2026-09-20T19:22:23.639Z lastInbound=2026-09-20T19:22:23.639Z
+    id=52 pending=False unread=1 handoffAt=2026-09-19T19:22:23.650Z lastInbound=2026-09-19T19:22:23.650Z
+    id=51 pending=False unread=1 handoffAt=2026-09-19T04:22:23.648Z lastInbound=2026-09-19T04:22:23.648Z
+    -> total=5 pending=1 nextCursor=None
+  >>> ESPERADO: 53 continua pending=true e na mesma posicao; so unread zerou.
+
+===== 9) RESUME manual limpa handoffAt -- conversa 53 =====
+HTTP/1.1 200 OK
+ id | bot_paused | handoff_at | handoff_motivo | handoff_resumo 
+----+------------+------------+----------------+----------------
+ 53 | f          |            |                | 
+(1 row)
+
+ username |        action        
+----------+----------------------
+ garcom1  | WHATSAPP_BOT_RESUMED
+(1 row)
+
+
+===== 11) GET /conversations/:id/messages (thread) =====
+{
+    "items": [
+        {
+            "id": 60,
+            "direction": "IN",
+            "content": "meu pedido veio errado",
+            "sentByName": null,
+            "createdAt": "2026-09-20T19:22:23.642Z",
+            "deliveryStatus": null,
+            "failureReason": null,
+            "waMessageId": "A1"
+        },
+        {
+            "id": 65,
+            "direction": "OUT",
+            "content": "Oi! Vi seu pedido aqui, ja vou resolver.",
+            "sentByName": "garcom1",
+            "createdAt": "2026-09-20T20:23:07.835Z",
+            "deliveryStatus": "ENVIADA",
+            "failureReason": null,
+            "waMessageId": "wamid.STUB1"
+        },
+        {
+            "id": 66,
+            "direction": "OUT",
+            "content": "Confirmando: troco o lanche.",
+            "sentByName": "garcom1",
+            "createdAt": "2026-09-20T20:23:07.922Z",
+            "deliveryStatus": "ENVIADA",
+            "failureReason": null,
+            "waMessageId": "wamid.STUB2"
+        }
+    ],
+    "hasMore": false
+}
+
+===================== 5 casos da mensagem pendente =====================
+### CASO A ###
+===== CASO A: sucesso lento -- ve PENDENTE antes de ENVIADA =====
+  no meio do envio: {"deliveryStatus":"PENDENTE","waMessageId":null,"failureReason":null}
+  depois do envio:   {"deliveryStatus":"ENVIADA","waMessageId":"wamid.ca8e0e4c-b9e2-4552-a065-e973c4b1e3ca","failureReason":null}
+  >>> ESPERADO: no meio PENDENTE sem waMessageId; depois ENVIADA com waMessageId e sem failureReason.
+
+### CASO B ###
+===== CASO B: Graph responde erro (401) -- FALHOU, sem apagar =====
+  sendWhatsappText lancou? Falha ao enviar mensagem no WhatsApp: {"error":{"message":"Error validating access token","type":"OAuthException","code":190}}
+  linha no banco: {"deliveryStatus":"FALHOU","waMessageId":null,"failureReason":"{\"error\":{\"message\":\"Error validating access token\",\"type\":\"OAuthException\",\"code\":190}}"}
+  >>> ESPERADO: lanca erro, linha continua no banco com FALHOU e failureReason com o corpo do 401.
+
+### CASO C ###
+===== CASO C: erro de rede (porta sem servidor nenhum) -- FALHOU com motivo de rede =====
+  sendWhatsappText lancou? Falha ao enviar mensagem no WhatsApp: fetch failed
+  linha no banco: {"deliveryStatus":"FALHOU","waMessageId":null,"failureReason":"fetch failed"}
+  >>> ESPERADO: lanca erro (ECONNREFUSED ou similar), linha FALHOU com esse motivo.
+
+### CASO D ###
+===== CASO D: sendPanelMessage NAO grava humanRepliedAt quando o envio falha =====
+  antes: {"botPaused":false,"humanRepliedAt":null}
+  sendPanelMessage lancou? Falha ao enviar mensagem no WhatsApp: {"error":{"message":"Error validating access token","type":"OAuthException","code":190}}
+  depois: {"botPaused":false,"humanRepliedAt":null}
+  >>> ESPERADO: lanca, humanRepliedAt continua null, botPaused nao muda para true por esta chamada.
+
+### CASO E ###
+===== CASO E: sendPanelMessage grava humanRepliedAt so quando o envio da certo =====
+ERRO NAO TRATADO NO SCRIPT: PrismaClientKnownRequestError: 
+Invalid `tx.log.create()` invocation in
+/home/user/Rede-Bob-s/backend/src/utils/logger.ts:11:16
+
+   8 };
+   9 
+  10 export async function createLog(tx: Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">, data: LogData) {
+→ 11   await tx.log.create(
+Foreign key constraint violated on the constraint: `logs_user_id_fkey`
+    at ei.handleRequestError (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:228:13)
+    at ei.handleAndLogRequestError (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:174:12)
+    at ei.request (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:143:12)
+    at async a (/home/user/Rede-Bob-s/backend/node_modules/@prisma/client/src/runtime/getPrismaClient.ts:833:24)
+    at async createLog (/home/user/Rede-Bob-s/backend/src/utils/logger.ts:11:3)
+    at async sendPanelMessage (/home/user/Rede-Bob-s/backend/src/modules/whatsapp/whatsapp.service.ts:866:3)
+    at async main (/tmp/claude-0/-home-user-Rede-Bob-s/3ddac799-0559-5345-a592-9ca07abf004f/scratchpad/prova-pendente.ts:83:19) {
+  code: 'P2003',
+  meta: { modelName: 'Log', constraint: 'logs_user_id_fkey' },
+  clientVersion: '6.19.3'
+}
+### CASO D ###
+===== CASO D: sendPanelMessage NAO grava humanRepliedAt quando o envio falha =====
+  antes: {"botPaused":false,"humanRepliedAt":null}
+  sendPanelMessage lancou? Falha ao enviar mensagem no WhatsApp: {"error":{"message":"Error validating access token","type":"OAuthException","code":190}}
+  depois: {"botPaused":false,"humanRepliedAt":null}
+  >>> ESPERADO: lanca, humanRepliedAt continua null, botPaused nao muda para true por esta chamada.
+
+### CASO E ###
+===== CASO E: sendPanelMessage grava humanRepliedAt so quando o envio da certo =====
+  retorno da rota: {"id":76,"direction":"OUT","content":"confirmando pedido","sentByName":"garcom1","createdAt":"2026-09-20T20:24:14.482Z","deliveryStatus":"ENVIADA","failureReason":null,"waMessageId":"wamid.STUB5"}
+  conversa depois: {"botPaused":true,"humanRepliedAt":"2026-09-20T20:24:14.480Z"}
+  >>> ESPERADO: deliveryStatus ENVIADA com waMessageId; humanRepliedAt preenchido; botPaused true.
+
+===================== 3 casos do resolveSendCredentials =====================
+===== CASO 1: phoneNumberId bate com conta ATIVA -- usa a credencial da conta =====
+  resultado: nao lancou (enviou)
+  >>> ESPERADO: nao lanca -- usa a credencial da conta PN_ATIVA_123.
+
+===== CASO 2: tabela de contas VAZIA -- fallback pro env e o comportamento certo hoje =====
+  resultado: nao lancou (enviou, via env)
+  >>> ESPERADO: nao lanca -- tabela vazia = modo legado, env e a unica credencial que existe.
+
+===== CASO 3: existe conta na tabela, mas esta phoneNumberId nao bate -- NAO cai pro env =====
+  resultado: LANCOU: Nenhuma conta WhatsApp ativa para phoneNumberId=PN_DESCONHECIDA_OU_DESATIVADA -- conta inexistente ou desativada. Não caio para as credenciais globais: enviaria pelo número errado em silêncio.
+  >>> ESPERADO: lanca erro.

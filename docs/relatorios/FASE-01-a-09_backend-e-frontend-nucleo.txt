@@ -1,0 +1,123 @@
+SISTEMA DE PEDIDOS TRAILER — RELATÓRIO DE FASE
+==================================================
+
+FASES: 1, 2, 3, 4 (backend) e 5, 6, 7, 8, 9 (frontend)
+NOME: Núcleo do sistema — API, banco, cardápio público, painéis internos
+STATUS: CONCLUÍDA E EM PRODUÇÃO NO REPOSITÓRIO (branch master)
+
+Commit de referência (Fase 9 + auditoria completa mesclada):
+  56381de "Merge PR #1: Auditoria completa, Fase 9, reformulação visual e
+  correções de negócio" — 2026-07-18 17:46:51 -0300
+Commit onde a Fase 9 em si foi implementada:
+  b78cd06 "feat: implementa Fase 9 - Painel ADM e Painel TI" — 2026-07-16 22:18:16 -0300
+
+NOTA DE PROVENIÊNCIA: este relatório foi compilado em 2026-08-06 a partir do
+que já estava documentado em docs/CONTEXTO.md (seção "1.1
+Estado da Implementação") e do histórico real do `git log`. Eu (Claude Code,
+nesta sessão) não estava presente na implementação original destas fases —
+não reexecutei os testes originais, só confirmo que o código e as migrations
+correspondentes existem no repositório hoje. Onde o CONTEXTO já registra
+prova real (tabela "Verificado com teste real"), reproduzo o que está lá:
+não invento nada além disso.
+
+--------------------------------------------------------------------------------
+O QUE FOI ENTREGUE
+--------------------------------------------------------------------------------
+
+Backend (Fases 1-4):
+- Express + TypeScript + Prisma v6 + PostgreSQL (Railway), um único
+  `new PrismaClient()` em src/config/prisma.ts.
+- Schema completo: User, MenuItem, Neighborhood, Order, OrderItem,
+  OrderItemExtra, OrderStatusHistory, Log, SystemConfig.
+- Módulos: auth, users, menu, orders, neighborhoods, config, logs, public.
+- Autenticação JWT própria (payload { userId, username, role }), fluxo de
+  aprovação de usuário (approved: false até ADM/TI liberar), proteção do
+  usuário "tecnico" contra exclusão/troca de papel.
+- Todo cálculo de dinheiro em Prisma.Decimal no backend (nunca Float).
+- Validação de pedido centralizada (mesma função serve painel interno e
+  cardápio público, com flag de origem).
+- Atribuição atômica de entregador via updateMany condicional (compare-and-set).
+- Confirmação obrigatória de pedido de MESA feito online (requiresStaffConfirmation).
+- Socket.io em dois namespaces: /staff (JWT obrigatório) e /public (anônimo,
+  nunca recebe dado de pedido — linha vermelha do projeto).
+- Rate limiting: 100/15min em GET público, 5/10min em POST público de pedido,
+  10/15min em login/registro. `trust proxy` configurado.
+- express-rate-limit, zod em toda validação de entrada, express-async wrappers.
+
+Frontend (Fases 5-9):
+- React 18 + TypeScript + Vite + Zustand + Tailwind + socket.io-client.
+- Cardápio público (`/`) sem login, code-splitting por rota, carrinho
+  persistido em localStorage, prevenção de pedido duplicado (botão desabilita
+  no submit).
+- Painéis internos (`/painel/*`) com login: GARCOM, CHAPISTA, ENTREGADOR,
+  ADM, TI — cada um com sua fila filtrada por status (nunca por data, ver
+  regra do "expediente atravessa a meia-noite" no CONTEXTO seção 5.6).
+- Painel ADM: dashboard com KPIs, gráfico de faturamento (recharts, carregado
+  só nesse chunk), exportação de PDF (jsPDF), gestão de cardápio/bairros/config.
+- Painel TI: gestão de usuários (aprovar, revogar, trocar papel, excluir),
+  logs com filtro e exportação CSV/JSON.
+
+Reformulação visual (5 passos, ver docs/ESTILO.md):
+  1. Componentes base migrados pra escala de 9 tons.
+  2. Elemento-assinatura "cartão-comanda" (Nº + separador tracejado + borda
+     superior) nos cards de pedido.
+  3. Cardápio público com textura de papel xadrez + identidade de marca.
+  4. Vermelho-farol (#E63946) exclusivo do painel do entregador.
+  5. Resto dos painéis internos migrado + composição de referência visual.
+  + rodada de polimento: SettingsPanel agrupado, empty states padronizados,
+    card "Pronto na Estufa".
+
+Funcionalidades extras (além das 10 fases originais do escopo inicial):
+- Aba "Todos" no cardápio público (primeira aba, itens agrupados por
+  categoria real, Acréscimos nunca aparece).
+- Exportação de PDF de vendas no dashboard ADM (computeKpis() compartilhado
+  entre tela e PDF pra nunca divergir).
+- Corte de horário do delivery às 18h (backend/src/utils/deliveryWindow.ts +
+  SystemConfig.deliveryExtendedUntil), com exceção pra pedido interno e
+  prorrogação manual pelo ADM/TI. Documentado em
+  docs/superpowers/specs/2026-07-15-delivery-auto-cutoff-design.md.
+- Fix: MESA/RETIRADA presos em PRONTO — chapista/garçom já conseguem marcar
+  ENTREGUE nesses dois tipos; guard explícito impede o mesmo em DELIVERY.
+
+--------------------------------------------------------------------------------
+PROVA REAL REGISTRADA NO CONTEXTO.md (reproduzida, não reexecutada por mim)
+--------------------------------------------------------------------------------
+
+- Pedido público → criação com snapshots (POST /public/orders, JSON conferido).
+- Aceite atômico de entrega (assignedToId + status EM_ROTA corretos).
+- Só o entregador dono finaliza o próprio pedido.
+- Pedido MESA online nasce travado (requiresStaffConfirmation: true).
+- Cozinha não vê pedido não confirmado; /confirm destrava.
+- Cancelamento exige motivo (400 sem notes); DINHEIRO < total rejeitado (400).
+- Usuário "tecnico" protegido em DELETE, PATCH /role e PATCH /approve.
+- Socket /staff recebe os 5 eventos de pedido (created, status_changed,
+  confirmed, accepted, cancelled).
+- CSV com escaping correto (nome com vírgula não quebra coluna).
+- Namespace /public nunca recebe dado de pedido (testado em paralelo, zero
+  vazamento).
+- Auditoria completa de vazamento de PII: nenhum io.emit() genérico sem
+  namespace.
+
+--------------------------------------------------------------------------------
+DÍVIDA TÉCNICA CONHECIDA (herdada, ainda registrada no CONTEXTO.md)
+--------------------------------------------------------------------------------
+
+1. `isProtectedUser` duplicado em 3 funções de users.service.ts — extrair
+   helper único é limpeza pendente, não bloqueador.
+2. Duas escalas de cor coexistindo (3 tons da Fase 5-7 vs. 9 tons da Fase 8+)
+   — decisão consciente de não unificar antes da reformulação visual completa.
+3. Rejeição de requiredChoice ausente (Super Dog / Macarrão) — validação
+   existe no código, não foi exercitada manualmente ainda.
+4. Rate limiting das rotas públicas sob carga real — não testado.
+
+--------------------------------------------------------------------------------
+PENDÊNCIA DE NEGÓCIO (não é código)
+--------------------------------------------------------------------------------
+
+Item 05 do contrato (controle de estoque): resolvido provisoriamente como
+"o toggle disponível/esgotado já existente é suficiente" — decisão do
+Rosario, a confirmar formalmente com o cliente.
+
+--------------------------------------------------------------------------------
+Relatório gerado em: 2026-08-06, sessão de revisão geral do projeto.
+--------------------------------------------------------------------------------

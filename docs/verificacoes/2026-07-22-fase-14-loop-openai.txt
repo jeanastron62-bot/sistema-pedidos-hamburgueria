@@ -1,0 +1,312 @@
+FASE 14 -- Prova end-to-end (rodada em 2026-07-28, servidor npm run dev,
+OPENAI_API_KEY real do usuário; META_ACCESS_TOKEN/META_PHONE_NUMBER_ID ainda
+são placeholders de teste -- todo envio real ao Graph API do Meta falha de
+propósito com "Error validating access token", esperado e sem relação com a
+lógica desta fase).
+
+Nenhum curl -v foi usado. Nenhum segredo (chave da OpenAI, tokens) aparece em
+texto neste arquivo.
+
+================================================================================
+CENÁRIO 1 -- "oi" (esperado: saudação, sem chamar função)
+================================================================================
+
+Estado do trailer no momento deste teste: fechado (trailerOpen=false).
+
+Payload enviado (webhook, assinatura HMAC real validada com sucesso):
+  telefone: 5531911110001
+  texto: "oi"
+
+Resposta HTTP do webhook: 200 OK
+
+Log do servidor:
+  [WHATSAPP_BOT_REPLY] {
+    conversationId: 3,
+    replyText: "Oi! O trailer do Sistema de Pedidos Trailer está fechado no momento. Voltamos a funcionar amanhã, a partir das 18h. 😊"
+  }
+  [WHATSAPP_BOT_FAILURE] { phone: '5531911110001', error: Error: Falha ao enviar mensagem no WhatsApp: ...OAuthException... }
+  [WHATSAPP_BOT_FAILURE_DOUBLE] { phone: '5531911110001', sendErr: Error: ...OAuthException... }
+
+Resultado: sem tool_call, resposta de saudação correta considerando o estado
+real (fechado) -- o modelo seguiu a regra do prompt "se o trailer estiver
+fechado, diga isso já na primeira resposta". [WHATSAPP_BOT_FAILURE]/[_DOUBLE]
+são o envio real ao Meta falhando por falta de credencial real -- esperado.
+
+================================================================================
+CENÁRIO 2 -- "vocês entregam em Alterosa 1?" (bairro real e ativo)
+================================================================================
+
+Trailer aberto e delivery ativo antes deste teste (PATCH /config/trailer/open
++ PATCH /config {deliveryActive:true} via token real de TI).
+
+Query direta em Neighborhood:
+  { id: 1, name: 'Alterosa 1', deliveryFee: 3, active: true, createdAt: ... }
+
+Payload enviado:
+  telefone: 5531911110002
+  texto: "oi, voces entregam em Alterosa 1?"
+
+Resposta HTTP do webhook: 200 OK
+
+Log do servidor:
+  [WHATSAPP_BOT_REPLY] {
+    conversationId: 5,
+    replyText: 'Sim, entregamos em Alterosa 1! 😊 Você gostaria de fazer um pedido para entrega ou retirada?'
+  }
+
+WhatsappMessage da conversa 5 (query direta):
+  [
+    { direction: 'IN', content: 'oi, voces entregam em Alterosa 1?', createdAt: 2026-07-28T17:06:36.906Z },
+    { direction: 'IN', content: 'show, entao quero pedir 2 X-Tudo pra retirada', createdAt: 2026-07-28T17:16:38.975Z }
+  ]
+  (a 2a linha é do cenário 6c, mesma conversa -- ver abaixo)
+
+Resultado: resposta bate exatamente com o bairro/taxa reais do banco.
+
+================================================================================
+CENÁRIO 3 -- bairro inventado (esperado: transferir_para_humano, botPaused=true)
+================================================================================
+
+Payload enviado:
+  telefone: 5531911110003
+  texto: "oi, voces entregam no bairro Jardim das Estrelas Distantes?"
+
+Resposta HTTP do webhook: 200 OK
+
+Log do servidor:
+  [WHATSAPP_BOT_HANDOFF] {
+    conversationId: 7,
+    motivo: 'BAIRRO_FORA_DA_LISTA',
+    resumo: 'Cliente perguntou sobre entrega no bairro Jardim das Estrelas Distantes.'
+  }
+  [WHATSAPP_BOT_REPLY] { conversationId: 7, replyText: 'Só um instante, vou confirmar isso com a nossa equipe.' }
+
+Query direta em WhatsappConversation (id=7), logo após o handoff:
+  { id: 7, phone: '5531911110003', botPaused: true, ... }
+
+Resultado: exatamente como esperado -- função real chamada, conversa pausada,
+log de handoff com motivo e resumo corretos.
+
+================================================================================
+CENÁRIO 4 -- mensagem nova pro mesmo telefone do cenário 3, sem destravar
+================================================================================
+
+Payload enviado:
+  telefone: 5531911110003
+  texto: "oi, alguem ai?"
+
+Resposta HTTP do webhook: 200 OK
+
+Log do servidor: NENHUM log novo apareceu (nem [WHATSAPP_BOT_REPLY], nem
+[WHATSAPP_BOT_FAILURE], nem chamada à OpenAI de nenhum tipo) -- confirma que
+`if (conversation.botPaused) continue;` bloqueou o processamento antes de
+qualquer custo.
+
+WhatsappMessage da conversa 7 (query direta) mostra a mensagem gravada mesmo
+assim (armazenamento não depende do bot estar pausado):
+  { direction: 'IN', content: 'oi, alguem ai?', createdAt: 2026-07-28T17:09:57.674Z }
+
+Resultado: exatamente como esperado -- sem chamada à OpenAI, mensagem só gravada.
+
+================================================================================
+CENÁRIO 5 -- destravar via PATCH /conversations/:id/resume, repetir mensagem
+================================================================================
+
+PATCH /api/webhook/whatsapp/conversations/7/resume (token real de GARCOM/TI)
+  Resposta: 200 { id: 7, ..., botPaused: false, ... }
+
+Mensagem repetida (telefone 5531911110003): "oi, ainda esta ai?"
+  Log: [WHATSAPP_BOT_HANDOFF] { conversationId: 7, motivo: 'BAIRRO_FORA_DA_LISTA', resumo: 'Cliente perguntou sobre entrega no bairro Jardim das Estrelas Distantes, que não está na lista.' }
+  [WHATSAPP_BOT_REPLY] { conversationId: 7, replyText: 'Só um instante, vou confirmar isso com a nossa equipe.' }
+
+ACHADO REAL (não é bug do endpoint de resume): o modelo recebeu o histórico da
+sessão (TTL 1h) ainda contendo a pergunta de bairro não resolvida, e decidiu
+chamar transferir_para_humano DE NOVO -- botPaused voltou a true. O mecanismo
+de resume funcionou corretamente (a OpenAI voltou a ser chamada -- não ficou
+mais silenciada, que é o que o endpoint garante); a repetição do handoff é
+julgamento do modelo dado o contexto ainda não resolvido, não falha do resume.
+
+Resumi de novo e mandei uma mensagem de assunto diferente na mesma conversa
+pra confirmar que o pipeline realmente processa mensagens pós-resume:
+
+PATCH .../resume novamente -> 200, botPaused: false
+
+Mensagem: "deixa pra la o bairro, voces tem coca-cola gelada?"
+  Log: [WHATSAPP_BOT_HANDOFF] { conversationId: 7, motivo: 'BAIRRO_FORA_DA_LISTA', resumo: 'Cliente perguntou sobre entrega no bairro Jardim das Estrelas Distantes.' }
+  [WHATSAPP_BOT_REPLY] { conversationId: 7, replyText: 'Só um instante, vou confirmar isso com a nossa equipe.' }
+
+O modelo insistiu no handoff pela 3a vez -- mesma causa raiz (contexto da
+sessão ainda contém o problema original). WhatsappMessage da conversa 7 ao
+final (4 mensagens IN, todas gravadas corretamente independente do resultado
+do bot):
+  [
+    { direction: 'IN', content: 'oi, voces entregam no bairro Jardim das Estrelas Distantes?', createdAt: 2026-07-28T17:07:44.326Z },
+    { direction: 'IN', content: 'oi, alguem ai?', createdAt: 2026-07-28T17:09:57.674Z },
+    { direction: 'IN', content: 'oi, ainda esta ai?', createdAt: 2026-07-28T17:12:06.557Z },
+    { direction: 'IN', content: 'deixa pra la o bairro, voces tem coca-cola gelada?', createdAt: 2026-07-28T17:13:15.677Z }
+  ]
+
+Resultado: resume funciona (prova: OpenAI voltou a ser chamada 3x, nunca mais
+silenciosamente ignorada) -- mas "volta a responder normalmente" no sentido
+de retomar uma conversa comum não se confirmou nesta janela de sessão, porque
+o modelo mantém o julgamento de handoff enquanto o histórico não resolvido
+segue dentro do TTL de 1h. Registro isso como achado do teste, não maquiei um
+resultado "limpo" trocando de assunto forçosamente.
+
+================================================================================
+CENÁRIO 6 -- "quero pedir 2 X-Tudo" (esperado: tenta criar_pedido, stub call)
+================================================================================
+
+Três tentativas, telefones/conversas diferentes, todas na mesma janela de
+horário real (28/07/2026, ~14:15 Brasília, terça-feira -- confirmado via
+`new Date('2026-07-28T12:00:00-03:00').toLocaleDateString('pt-BR',
+{weekday:'long'})` = "terça-feira", então a regra "segunda não abre" não se
+aplica aqui):
+
+Tentativa 1 (telefone 5531911110006, conversa nova):
+  "oi, quero pedir 2 X-Tudo pra retirada"
+  [WHATSAPP_BOT_REPLY] { conversationId: 15, replyText: "O Sistema de Pedidos Trailer está fechado no momento. O funcionamento é de terça a domingo, a partir das 18h. \n\nVocê pode voltar mais tarde? 😄" }
+
+Tentativa 2 (telefone 5531911110066, conversa nova):
+  "quero pedir 2 X-Tudo pra retirada, por favor"
+  [WHATSAPP_BOT_REPLY] { conversationId: 17, replyText: 'O trailer está fechado no momento! Estamos abertos de terça a domingo, a partir das 18h. Se precisar de algo mais, é só avisar!' }
+
+Tentativa 3 (continuando a conversa do cenário 2, telefone 5531911110002,
+que já tinha "sim, entregamos" como resposta anterior):
+  "show, entao quero pedir 2 X-Tudo pra retirada"
+  [WHATSAPP_BOT_REPLY] { conversationId: 5, replyText: 'O trailer está fechado. Estamos abertos de terça a domingo a partir das 18h. Volte mais tarde!' }
+
+VERIFICAÇÃO DO ESTADO REAL ENVIADO AO MODELO (chamei buildSystemPrompt()
+direto, sem passar pelo webhook, no mesmo instante):
+  Trailer: aberto
+  Hora atual: 28/07/2026, 14:15:01
+  Delivery permitido nesta conversa: não
+
+ACHADO REAL (bug de aderência ao prompt, não do meu código): o campo
+{{TRAILER_ABERTO}} foi corretamente resolvido como "aberto" (trailerOpen=true,
+scheduledCloseAt no futuro) -- mas o modelo respondeu como se estivesse
+fechado nas 3 tentativas, de forma consistente. Parece estar recalculando por
+conta própria a partir do texto estático "Funcionamento: terça a domingo, a
+partir das 18h" + a hora atual (14:15, antes das 18h), ao invés de confiar no
+campo explícito TRAILER_ABERTO como o prompt instrui. Isso é exatamente o tipo
+de erro de interpretação que a seção 2 do anexo PROMPT.md avisa que
+`strict: true` NÃO elimina ("garante a forma do JSON, não o conteúdo") --
+mas aqui nem chegou a tentar uma function call, é a camada de texto livre que
+diverge do dado vivo.
+
+Não tentei mais vezes (cada tentativa é uma chamada paga) -- reproduzido 3/3,
+comportamento consistente, não parece ser acaso de amostragem pequena.
+`criar_pedido` (extração de nome_item/quantidade) NÃO PÔDE ser exercitado
+como o item 6 pede, por causa deste comportamento do modelo, não por falha no
+dispatchToolCall/tools.ts (que nunca chegaram a ser acionados). Fica registrado
+como entrada real para a pendência "Ainda em aberto: modelo de LLM" do anexo
+PROMPT.md -- precisa de teste real de horário (rodar durante o expediente
+real, ou ajustar o prompt) antes de considerar o fluxo de criar_pedido
+validado ponta a ponta.
+
+--------------------------------------------------------------------------------
+RETESTE (2026-07-28, mesmo dia, horário simulado) -- HIPÓTESE CONFIRMADA
+--------------------------------------------------------------------------------
+
+Horário real ainda não tinha passado das 18h quando este reteste foi pedido
+(14:25 Brasília). Em vez de esperar ~3h40, adicionei um parâmetro opcional
+`now` em `buildSystemPrompt(now: Date = new Date())` -- mesmo padrão já usado
+em `isEffectivelyOpen`/`isDeliveryTimeBlocked`. Nenhum chamador de produção
+passa esse argumento (o webhook real em whatsapp.controller.ts continua
+usando `new Date()` de verdade); só este teste direto passou um horário
+simulado. Nenhuma rota HTTP aceita horário fake -- o teste chamou
+buildSystemPrompt/callOpenAI/dispatchToolCall direto, as mesmas funções reais
+que o webhook usa, só que orquestradas por um script em vez de via HTTP.
+
+`now` simulado: 2026-07-28T22:00:00.000Z = 28/07/2026 19:00 Brasília (depois
+das 18h, mesmo dia real, trailer já aberto/agendado de testes anteriores).
+
+Turno 1 -- "oi, quero pedir 2 X-Tudo pra retirada":
+  Estado agora (confirmado): Trailer: aberto | Hora atual: 28/07/2026, 19:00:00 | Delivery permitido: sim
+  tool_calls: undefined
+  content: "Oi! O trailer está aberto e podemos fazer a retirada. \n\nVocê gostaria de incluir algum acréscimo nos X-Tudo?"
+
+CONFIRMADO: com a hora corrigida pra depois das 18h, o modelo já não diz mais
+que está fechado -- a causa raiz era mesmo a combinação hora-antes-das-18h +
+texto estático do prompt, não um bug estrutural de ignorar TRAILER_ABERTO.
+Não chamou criar_pedido ainda porque o fluxo do prompt (seção "Fluxo") exige
+reunir item/acréscimo/nome/pagamento e só chamar a função após confirmação
+explícita (passos 3-8) -- comportamento correto, não outra falha.
+
+Turno 2 -- "sem acrescimo nenhum. meu nome e Cliente Teste. vou pagar no pix.
+pode confirmar o pedido":
+  tool_calls: undefined
+  content: "Vamos montar seu pedido! \n\n- **2 X-Tudo**: R$ 24,00 cada\n\nTotal dos lanches: R$ 48,00\n- Tipo: Retirada\n- Nome: Cliente Teste\n- Forma de pagamento: PIX \n\nPosso confirmar?"
+
+Ainda sem tool_call -- correto, o prompt exige confirmação explícita (passo 7
+pergunta "posso confirmar?", passo 8 só chama a função depois que o cliente
+confirmar).
+
+Turno 3 -- "sim, pode confirmar!":
+  tool_calls: [{
+    "function": {
+      "name": "criar_pedido",
+      "arguments": "{\"tipo\":\"RETIRADA\",\"nome_cliente\":\"Cliente Teste\",\"bairro\":null,\"endereco\":null,\"itens\":[{\"nome_item\":\"X-Tudo\",\"quantidade\":2,\"escolha_obrigatoria\":null,\"adicionais\":[],\"observacoes\":null}],\"forma_pagamento\":\"PIX\",\"valor_pago_dinheiro\":null}"
+    }
+  }]
+  content: null
+
+dispatchToolCall (stub, não tocou dado real):
+  [WHATSAPP_BOT_STUB_CALL] { conversationId: 26, name: 'criar_pedido', args: { tipo: 'RETIRADA', nome_cliente: 'Cliente Teste', bairro: null, endereco: null, itens: [ [Object] ], forma_pagamento: 'PIX', valor_pago_dinheiro: null } }
+  reply: 'Isso ainda está sendo configurado por aqui -- já te chamamos assim que possível.'
+
+RESULTADO FINAL: criar_pedido chamado com extração correta -- quantidade=2,
+nome_item="X-Tudo", tipo="RETIRADA", bairro/endereco corretamente null (não se
+aplica a retirada), forma_pagamento="PIX", valor_pago_dinheiro corretamente
+null (não é DINHEIRO). Schema strict respeitado (todos os campos obrigatórios
+presentes, nulls explícitos onde aplicável). Stub logado, nenhum dado real
+tocado, resposta correta ao cliente. Cenário 6 validado ponta a ponta.
+
+Conversas de teste (ids 24, 25, 26) removidas ao final de cada rodada.
+
+================================================================================
+CENÁRIO 7 -- Rate limit (20 mensagens anteriores + a 21a)
+================================================================================
+
+Custo controlado: as 20 mensagens "anteriores" foram semeadas DIRETO NO BANCO
+(sem passar pelo webhook/OpenAI) em vez de gastar 20 chamadas pagas reais só
+pra estabelecer a contagem -- o que importa provar é o comportamento do
+gate (isRateLimited + ausência de chamada à OpenAI), não o conteúdo de 20
+respostas repetidas.
+
+Seed: conversationId=21, telefone 5531911119999, 20 WhatsappMessage
+(direction=IN) criadas direto via Prisma, contadas: 20.
+
+Mensagem real via webhook (a 21a no total):
+  telefone: 5531911119999
+  texto: "oi, mais uma mensagem"
+
+Resposta HTTP do webhook: 200 OK
+
+Log do servidor: NENHUM [WHATSAPP_BOT_REPLY] apareceu (confirma: nenhuma
+chamada à OpenAI aconteceu). O único log foi o erro de envio da mensagem fixa
+de rate limit falhando contra o Meta real (esperado, sem credencial real):
+  Erro ao processar webhook do WhatsApp: Error: Falha ao enviar mensagem no
+  WhatsApp: ...OAuthException... (na linha do sendWhatsappText da branch de
+  rate limit, whatsapp.controller.ts:51)
+
+Contagem final confirmada via query direta:
+  total de mensagens IN na conversa 21 (20 semeadas + 1 real): 21
+
+DIVERGÊNCIA ENCONTRADA vs. o doc: o item 7 diz "a partir da 22a, esperado:
+resposta fixa de rate limit". A matemática real do código
+(`count > MAX_INBOUND_PER_WINDOW`, MAX=20) bloqueia quando a contagem chega a
+21 -- ou seja, JÁ NA 21a mensagem, não na 22a. Isso é consequência da ordem
+de operações em receive(): storeInboundMessages() grava a mensagem atual
+ANTES do loop checar isRateLimited(), então a mensagem corrente já conta pra
+si mesma. Não fiz ajuste no código -- o próprio doc já registra que "não é o
+rate limit completo de produção... o número certo só se decide com uso real",
+então trato isso como uma nota de comportamento real observado, não uma
+correção a aplicar agora.
+
+================================================================================
+LIMPEZA
+================================================================================
+
+Dados de teste (conversas/mensagens sintéticas, telefones de teste) e scripts
+descartáveis (_scratch_*.ts) removidos após esta prova. Config resetado.

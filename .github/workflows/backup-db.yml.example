@@ -1,0 +1,39 @@
+# Fase 10, Camada 2 -- agendador do backup independente (ver backend/scripts/backup-db.sh).
+#
+# INATIVO DE PROPOSITO: extensao ".yml.example", o GitHub Actions so reconhece
+# ".yml"/".yaml" dentro de .github/workflows/. Para ativar:
+#   1. Renomeie para backup-db.yml
+#   2. Cadastre em Settings -> Secrets and variables -> Actions, neste repositorio:
+#      DATABASE_URL (a mesma de producao, ou DATABASE_PUBLIC_URL se o Postgres
+#        so aceitar conexao externa via TCP Proxy -- ver CONTEXTO.md secao 2.4)
+#      BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#   3. Confirme o horario abaixo (UTC) -- 06:00 UTC = 03:00 America/Sao_Paulo,
+#      depois do expediente (18h-05h) ter fechado.
+#
+# Depois de ativar, teste rodando manualmente uma vez (aba Actions -> Run
+# workflow) antes de confiar no agendamento -- mesma regra do CONTEXTO.md de
+# "prova, nao configuracao": so considerar cumprido depois de ver o arquivo
+# aparecer de verdade no bucket.
+
+name: Backup do banco (Fase 10)
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar cliente Postgres e aws-cli
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client awscli
+      - name: Rodar backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_S3_ENDPOINT: ${{ secrets.BACKUP_S3_ENDPOINT }}
+          BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: sh backend/scripts/backup-db.sh

@@ -1,0 +1,96 @@
+FASE 17.1 -- SCHEMA DA CAIXA DE ENTRADA -- PROVA
+Data: 2026-09-18
+
+Decisao 1 do usuario aplicada: NAO foram criadas versoes em ingles dos campos
+de handoff. handoffMotivo e handoffResumo, que ja existiam e ja sao consumidos
+pela UI, continuam sendo os campos. A migration adiciona so os tres que
+faltavam de verdade.
+
+--------------------------------------------------------------------------------
+AMBIENTE
+--------------------------------------------------------------------------------
+Este contexiner nao tinha banco. PostgreSQL 16.13 foi instalado e um cluster
+proprio subiu em /var/lib/postgresql/pedidos, porta 5432, socket /tmp, base
+"pedidos". As migrations anteriores foram aplicadas com `prisma migrate deploy`
+antes de gerar a nova -- ou seja, a migration desta fase foi gerada contra o
+schema real do projeto, nao contra banco vazio.
+
+  $ npx prisma migrate deploy
+  All migrations have been successfully applied.
+  MIGRATE DEPLOY EXIT: 0
+
+--------------------------------------------------------------------------------
+COMANDO DA FASE
+--------------------------------------------------------------------------------
+  $ npx prisma migrate dev --name fase17_caixa_entrada
+
+  Environment variables loaded from .env
+  Prisma schema loaded from prisma/schema.prisma
+  Datasource "db": PostgreSQL database "pedidos", schema "public" at "localhost:5432"
+
+  Applying migration `20260918221611_fase17_caixa_entrada`
+
+  The following migration(s) have been created and applied from new schema changes:
+
+  prisma/migrations/
+    └─ 20260918221611_fase17_caixa_entrada/
+      └─ migration.sql
+
+  Your database is now in sync with your schema.
+
+  Running generate... (Use --skip-generate to skip the generators)
+  Generated Prisma Client (v6.19.3) to ./node_modules/@prisma/client in 367ms
+
+  MIGRATE DEV EXIT: 0
+
+--------------------------------------------------------------------------------
+CONTEUDO DO migration.sql
+--------------------------------------------------------------------------------
+-- AlterTable
+ALTER TABLE "whatsapp_conversations" ADD COLUMN     "handoff_at" TIMESTAMP(3),
+ADD COLUMN     "last_read_at" TIMESTAMP(3);
+
+-- AlterTable
+ALTER TABLE "whatsapp_messages" ADD COLUMN     "sent_by_name" TEXT;
+
+--------------------------------------------------------------------------------
+CRITERIO DA FASE: so ADD COLUMN, todas nullable
+--------------------------------------------------------------------------------
+  ocorrencias de DROP ................... 0
+  ocorrencias de ALTER COLUMN ... TYPE .. 0
+  ocorrencias de NOT NULL ............... 0
+  statements que nao sao ADD COLUMN ..... 0
+
+Conferido tambem no banco, nao so no .sql:
+
+  select table_name, column_name, data_type, is_nullable
+  from information_schema.columns
+  where column_name in ('handoff_at','last_read_at','sent_by_name');
+
+         table_name       | column_name  |          data_type          | is_nullable
+  ------------------------+--------------+-----------------------------+-------------
+   whatsapp_conversations | handoff_at   | timestamp without time zone | YES
+   whatsapp_conversations | last_read_at | timestamp without time zone | YES
+   whatsapp_messages      | sent_by_name | text                        | YES
+  (3 rows)
+
+APROVADO no criterio da 17.1.
+
+--------------------------------------------------------------------------------
+COMENTARIOS GRAVADOS NO SCHEMA (pedido da fase)
+--------------------------------------------------------------------------------
+handoffAt   -- por que NAO usar updatedAt no lugar (deliveryGraceUntil escreve
+               na linha a cada mensagem entre 18h e 23h59, entao "pausada ha X"
+               por updatedAt ja mentia antes desta fase), e que os dois
+               caminhos de pausa gravam e os dois de despausa limpam.
+lastReadAt  -- que e POR CONVERSA e nao por usuario, com o motivo, pra proxima
+               sessao nao "corrigir" achando que e bug. E que nao-lida e so
+               selo visual: a prioridade da fila nao usa este campo.
+sentByName  -- snapshot de username, mesmo padrao de Order.createdByName;
+               null = nao saiu do painel.
+
+--------------------------------------------------------------------------------
+NAO FEITO NESTA ETAPA
+--------------------------------------------------------------------------------
+Nenhuma linha de codigo de aplicacao mudou. Os campos existem e estao vazios;
+quem os preenche e a 17.2.
