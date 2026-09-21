@@ -1,88 +1,0 @@
-=== a) POST smb_message_echoes com assinatura valida (reteste apos corrigir lastInboundAt) ===
-  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
-                                 Dload  Upload  Total   Spent   Left   Speed
-  0      0   0      0   0      0      0      0                              0100    409 100      2 100    407     58  11977                              0100    409 100      2 100    407     58  11910                              0100    409 100      2 100    407     58  11851                              0
-HTTP/1.1 200 OK
-X-Powered-By: Express
-Content-Type: text/plain; charset=utf-8
-Content-Length: 2
-ETag: W/"2-nOO9QiTIwXgNtWtBJezz8kv3SLc"
-Date: Thu, 06 Aug 2026 18:14:03 GMT
-Connection: keep-alive
-Keep-Alive: timeout=5
-
-OK=== b) confirmacao no banco -- lastInboundAt NAO deve ser preenchido por um eco ===
-{
-  "id": 28,
-  "phone": "5531911119001",
-  "botPaused": true,
-  "lastInboundAt": null,
-  "humanRepliedAt": "2026-08-06T18:14:06.695Z",
-  "createdAt": "2026-08-06T18:14:05.073Z",
-  "updatedAt": "2026-08-06T18:14:06.696Z",
-  "messages": [
-    {
-      "id": 34,
-      "conversationId": 28,
-      "waMessageId": "wamid.ECHO_TESTE_1786039791430",
-      "direction": "OUT",
-      "rawPayload": {
-        "id": "wamid.ECHO_TESTE_1786039791430",
-        "to": "5531911119001",
-        "text": {
-          "body": "Já te atendi por aqui, um instante!"
-        },
-        "type": "text",
-        "timestamp": "1786039791"
-      },
-      "content": "Já te atendi por aqui, um instante!",
-      "createdAt": "2026-08-06T18:14:07.102Z"
-    }
-  ]
-}
-=== c) reenvio do MESMO eco (mesmo waMessageId) -- deve ser 200 e idempotente ===
-  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
-                                 Dload  Upload  Total   Spent   Left   Speed
-  0      0   0      0   0      0      0      0                              0100    409 100      2 100    407    807 160.3k                              0100    409 100      2 100    407    690 137.2k                              0100    409 100      2 100    407    623 123.8k                              0
-HTTP/1.1 200 OK
-X-Powered-By: Express
-Content-Type: text/plain; charset=utf-8
-Content-Length: 2
-ETag: W/"2-nOO9QiTIwXgNtWtBJezz8kv3SLc"
-Date: Thu, 06 Aug 2026 18:15:46 GMT
-Connection: keep-alive
-Keep-Alive: timeout=5
-
-OK=== d) contagem apos reenvio (idempotencia) + ajuste de humanRepliedAt pra simular 31min ===
-mensagens OUT na conversa apos reenvio do mesmo eco (esperado: 1, nao 2): 1
-humanRepliedAt ajustado pra simular 31min atras: 2026-08-06T17:45:17.836Z
-=== e) mensagem nova do cliente, 31min depois -- deve auto-despausar e o bot deve processar ===
-  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
-                                 Dload  Upload  Total   Spent   Left   Speed
-  0      0   0      0   0      0      0      0                              0100    456 100      2 100    454    856 189.7k                              0100    456 100      2 100    454    819 181.7k                              0100    456 100      2 100    454    790 175.3k                              0
-HTTP/1.1 200 OK
-X-Powered-By: Express
-Content-Type: text/plain; charset=utf-8
-Content-Length: 2
-ETag: W/"2-nOO9QiTIwXgNtWtBJezz8kv3SLc"
-Date: Thu, 06 Aug 2026 18:16:32 GMT
-Connection: keep-alive
-Keep-Alive: timeout=5
-
-OK=== f) log do servidor: WHATSAPP_HUMAN_TAKEOVER -> WHATSAPP_BOT_AUTO_RESUME -> WHATSAPP_BOT_REPLY ===
-[WHATSAPP_HUMAN_TAKEOVER] { conversationId: 28, phone: "5531911119001" }
-[WHATSAPP_BOT_AUTO_RESUME] { conversationId: 28, afterMinutes: 30 }
-[WHATSAPP_BOT_REPLY] { conversationId: 28, replyText: "Opa! To aqui, mas o trailer ta fechado agora. A gente abre amanha as 18h. Se precisar de algo, pode perguntar!" }
-[WHATSAPP_BOT_FAILURE] envio real ao Graph API falhou -- OAuthException, sessao do token de teste expirada (mesma classe de falha esperada e ja documentada na prova da Fase 14, META_ACCESS_TOKEN ainda e placeholder)
-
-=== g) estado final no banco ===
-estado final da conversa (botPaused deve ser false -- auto-despausou):
-{
-  "id": 28,
-  "phone": "5531911119001",
-  "botPaused": false,
-  "lastInboundAt": "2026-08-06T18:16:33.547Z",
-  "humanRepliedAt": "2026-08-06T17:45:17.836Z",
-  "createdAt": "2026-08-06T18:14:05.073Z",
-  "updatedAt": "2026-08-06T18:16:33.751Z"
-}

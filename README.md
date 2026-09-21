@@ -2,7 +2,7 @@
 
 Aplicação web completa para um trailer de lanches: cardápio público para o cliente pedir pelo celular, painéis internos por função (garçom, cozinha, entregador, administrador, TI) com atualização em tempo real, exportação de relatório em PDF e Excel, e um atendente virtual no WhatsApp que recebe pedidos usando a API oficial da Meta e um modelo da OpenAI com *tool calling*.
 
-Projeto de produção, pensado para ser usado ao vivo durante o expediente (18h às 05h), que atravessa a meia-noite. Cada decisão de arquitetura documentada em `docs/CONTEXTO.md` nasceu de um problema real: pedido duplicado, virada de dia no meio do turno, aritmética de dinheiro em ponto flutuante, vazamento de dados pessoais por socket.
+Projeto de produção, pensado para ser usado ao vivo durante o expediente (18h às 05h), que atravessa a meia-noite. Cada decisão de arquitetura nasceu de um problema real: pedido duplicado, virada de dia no meio do turno, aritmética de dinheiro em ponto flutuante, vazamento de dados pessoais por socket.
 
 Esta é uma cópia de portfólio: mesmo código e mesmas regras de negócio do sistema original, com nome, identidade visual, telefone e Instagram trocados por um exemplo neutro — nada aqui identifica o negócio real por trás do projeto.
 
@@ -27,27 +27,27 @@ Sistema rodando localmente, com dados de exemplo — sem nenhuma informação re
 
 **Cardápio público**, aberto direto no celular do cliente, sem instalar nada:
 
-![Cardápio público](docs/screenshots/cardapio-publico.png)
+![Cardápio público](screenshots/cardapio-publico.png)
 
 **Painel do administrador** — faturamento do período, gráfico e os dois botões de exportação (PDF e **Excel**):
 
-![Dashboard do administrador com exportação em Excel](docs/screenshots/dashboard-adm.png)
+![Dashboard do administrador com exportação em Excel](screenshots/dashboard-adm.png)
 
 **Atendimento via WhatsApp** — quando o bot esbarra em algo que só um humano resolve (reclamação, bairro fora da área, pedido agendado), ele passa a conversa pra fila do painel, com o motivo já resumido:
 
-![Fila de atendimento humano do bot de WhatsApp](docs/screenshots/atendimento-whatsapp.png)
+![Fila de atendimento humano do bot de WhatsApp](screenshots/atendimento-whatsapp.png)
 
 **Painel da cozinha** — fila por status, sem filtro de data (o turno atravessa a meia-noite):
 
-![Painel da cozinha](docs/screenshots/painel-cozinha.png)
+![Painel da cozinha](screenshots/painel-cozinha.png)
 
 **Painel do entregador** — pedidos prontos pra sair, aceite atômico (dois entregadores nunca pegam o mesmo pedido):
 
-![Painel do entregador](docs/screenshots/painel-entrega.png)
+![Painel do entregador](screenshots/painel-entrega.png)
 
 **Login** dos colaboradores, por papel:
 
-![Tela de login](docs/screenshots/login.png)
+![Tela de login](screenshots/login.png)
 
 ## O que o sistema faz
 
@@ -109,14 +109,7 @@ frontend/
   src/components/    admin, cart, menu, order, whatsapp, ui
   src/stores/        Zustand (auth, carrinho, catálogo, pedidos, socket, inbox e thread do WhatsApp)
   src/utils/         reportXlsx.ts + xlsxWriter.ts (exportação Excel), orderReportPdf.ts (PDF)
-docs/
-  CONTEXTO.md        arquitetura, schema, regras de negócio e decisões tomadas
-  ESTILO.md          sistema visual
-  BOT-WHATSAPP-PROMPT.md  system prompt e definição das tools do bot
-  FASE-*.md          especificação de cada fase de desenvolvimento
-  relatorios/        relatório de entrega de cada fase
-  verificacoes/      saída bruta dos testes manuais de cada fase
-  screenshots/        imagens usadas neste README
+screenshots/         imagens usadas neste README
 ```
 
 ## Rodando localmente
@@ -170,7 +163,7 @@ cd frontend
 node --experimental-strip-types scripts/periods.selfcheck.ts  # fronteiras de semana/mês/ano
 ```
 
-Os testes de integração de cada fase foram feitos contra o servidor real e a saída está em `docs/verificacoes/`.
+Os testes de integração de cada fase foram feitos contra o servidor real, rodando as rotas e conferindo o resultado no banco.
 
 ## API
 
@@ -191,10 +184,10 @@ GET/POST /api/webhook/whatsapp              Meta (verificação e recebimento)
 GET/POST/PATCH /api/webhook/whatsapp/conversations/*  caixa de entrada de atendimento (GARCOM, CHAPISTA, ADM, TI)
 ```
 
-Tabela completa, transições de status por papel e limites de rate limit em `docs/CONTEXTO.md`, seção 7.
+Transições de status por papel: CHAPISTA move `AGUARDANDO → PREPARANDO → PRONTO`; ENTREGADOR aceita `PRONTO → EM_ROTA` (atômico) e fecha `EM_ROTA → ENTREGUE` só se for o dono do pedido; GARCOM/CHAPISTA/ADM/TI cancelam qualquer status com motivo obrigatório; ADM/TI fazem qualquer transição.
 
 ## Fases entregues
 
 1 a 9: backend e frontend do núcleo. 10: backup e deploy. 11: fechamento agendado do trailer. 12: bairro personalizado em pedido interno. 13: webhook do WhatsApp. 14: loop com OpenAI e resposta real. 15: Embedded Signup e coexistência de número. 16: correções da primeira rodada de testes do bot. 17: caixa de entrada de atendimento humano (thread, mensagem pendente, despausa automática) e exportação de relatório em Excel.
 
-Relatório de cada fase em `docs/relatorios/`. Lições aprendidas específicas da integração com WhatsApp em `docs/LESSONS_LEARNED_WHATSAPP_COEXISTENCE.md`.
+Cada fase foi entregue com prova de teste real contra o servidor rodando, não só código compilado.
